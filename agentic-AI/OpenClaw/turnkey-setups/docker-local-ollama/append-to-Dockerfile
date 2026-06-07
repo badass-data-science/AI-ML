@@ -1,0 +1,57 @@
+
+
+
+##############################
+#   Emily's root additions   #
+##############################
+
+USER root
+
+# update
+RUN apt update
+
+# install emacs
+RUN apt install -y emacs
+
+# install pip
+RUN apt install -y python3-pip
+
+# install less terminal pager
+RUN apt install less
+
+# install dependencies and create user for brew
+RUN apt install -y build-essential git procps file
+RUN useradd -m -s /bin/bash linuxbrew
+RUN echo 'linuxbrew ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+###################################
+#   Emily's linuxbrew additions   #
+###################################
+
+USER linuxbrew
+
+RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"
+
+RUN brew tap steipete/tap
+
+##############################
+#   Emily's node additions   #
+##############################
+
+USER node
+
+# add brew to PATH
+ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"
+
+# verify brew installation
+RUN brew --version
+
+# install dependencies
+RUN pip install --break-system-packages --no-cache-dir pandas
+RUN pip install --break-system-packages --no-cache-dir feedparser
+RUN pip install --break-system-packages --no-cache-dir papermill
+RUN pip install --break-system-packages --no-cache-dir requests
+
+
