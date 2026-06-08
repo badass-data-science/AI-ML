@@ -1,4 +1,7 @@
-This directory contains my experiments with expert systems:
+This directory contains my experiments with expert systems, using two languages:
+
+* CLIPS - The classic expert system programming language
+* Clara Rules - Expert system rules expressed in Clojure code
 
 # What Is an Expert System?
 
