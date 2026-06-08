@@ -1,3 +1,5 @@
+The following is LLM-generated:
+
 # Purse Recommendation Expert System
 
 This project is a small Clojure expert system that recommends purse sizes based on facts about people. It uses [Clara Rules](https://www.clara-rules.org/) to define facts, rules, and inferred recommendations.
