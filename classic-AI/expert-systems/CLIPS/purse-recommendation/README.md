@@ -2,6 +2,8 @@
 
 This project demonstrates a small rule-based expert system written in CLIPS. The system recommends a purse size for each person based on their height and body shape, then shows a second rule firing as a cascade effect.
 
+The content below is LLM-generated:
+
 ## Overview
 
 The program defines two main fact templates:
