@@ -11,7 +11,7 @@ A rules engine is a system for separating conditional decision logic from ordina
 Instead of writing one large block of nested `if`, `cond`, or `case` expressions, you define many small rules such as:
 
 - If a customer is VIP, give them priority support.
-- If a purse recommendation is large and the person likes pink, suggest a large pink purse.
+- If a large purse is recommendated and the customer likes pink, suggest a large pink purse.
 - If a support request is high priority, notify the assigned representative.
 
 Each rule describes:
@@ -243,72 +243,6 @@ For Clojure namespaces, hyphens in namespace names map to underscores in file pa
 clara-example.core -> src/clara_example/core.clj
 ```
 
-## Common Mistakes
-
-### 1. Namespace Mismatch
-
-If Leiningen says:
-
-```text
-Cannot find anything to run for: some.namespace
-```
-
-check that these all match:
-
-```clojure
-:main some.namespace
-(ns some.namespace ...)
-(mk-session 'some.namespace)
-```
-
-### 2. Wrong Namespace in `mk-session`
-
-This is incorrect unless your rules are actually in that namespace:
-
-```clojure
-(mk-session 'clara.my-rules)
-```
-
-Use the namespace where your rules are defined:
-
-```clojure
-(mk-session 'my-project.core)
-```
-
-### 3. Forgetting to Fire Rules
-
-Inserting facts is not enough. You must call:
-
-```clojure
-(fire-rules)
-```
-
-or:
-
-```clojure
-(fire-rules session)
-```
-
-### 4. Expecting Mutation
-
-Clara sessions are immutable. Functions such as `insert` and `fire-rules` return updated sessions.
-
-This works:
-
-```clojure
-(-> (mk-session 'my-project.core)
-    (insert fact1 fact2)
-    (fire-rules))
-```
-
-This does not update the original session unless you use the returned value:
-
-```clojure
-(def session (mk-session 'my-project.core))
-(insert session fact1)
-(fire-rules session)
-```
-
 ## When to Use Clara Rules
 
 Clara Rules is a good fit when:
@@ -342,7 +276,7 @@ A rules engine may be unnecessary when:
 
 ## Further Reading
 
-- Clara Rules official website
-- Clara Rules documentation
+- [Clara Rules official website](https://www.clara-rules.org/)
+- [Clara Rules documentation](https://www.clara-rules.org/docs/firststeps/)
 - Clara Rules GitHub repository
 - Clara examples repository
