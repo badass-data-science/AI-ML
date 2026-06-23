@@ -11,7 +11,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
 #
-# Declare global color types
+# Declare global warning level color types
 #
 Color = Literal["green", "yellow", "red"]
 
@@ -35,7 +35,7 @@ class VixResult(BaseModel):
     interpretation: str = Field(description="Plain-English interpretation of the VIX level.")
 
 #
-# Define a function for classifying VIX values by warning color
+# Define a function for classifying VIX values by warning level color
 #
 def classify_vix(vix: float) -> Color:
     """Classify VIX into a simple color-based volatility regime."""
@@ -47,7 +47,7 @@ def classify_vix(vix: float) -> Color:
     return "green"
 
 #
-# Provide a prose description of each color warning
+# Provide a prose description of each color warning level
 #
 def explain_color(color: Color) -> str:
     """Return a simple human-readable explanation for the color classification."""
@@ -59,7 +59,10 @@ def explain_color(color: Color) -> str:
     }
     return explanations[color]
 
-
+#
+# Define an MCP tool for retrieving and categorizing VIX that LLMs can
+# discover and execute
+#
 @mcp.tool()
 def get_most_recent_vix(period: str = "7d") -> VixResult:
     """
@@ -77,35 +80,64 @@ def get_most_recent_vix(period: str = "7d") -> VixResult:
         This tool is informational only and is not financial advice.
     """
 
+    #
+    # Specify the allowable periods we can consider. For reasons
+    # specified below I recommend using '7d'
+    #
     allowed_periods = {"1d", "5d", "7d", "1mo", "3mo", "6mo", "1y"}
 
+    # QA
     if period not in allowed_periods:
         raise ValueError(
             f"Unsupported period={period!r}. "
             f"Allowed values are: {sorted(allowed_periods)}"
         )
 
+    #
+    # Get recent VIX history. We ultimately only want the
+    # most recent close price so no need to go back very far;
+    # I default to seven days to more than cover market
+    # closures for four-day weekends
+    #
     symbol = "^VIX"
     history = yf.Ticker(symbol).history(period=period)
 
+    # QA
     if history.empty or "Close" not in history.columns:
         raise RuntimeError(f"No VIX close data returned for period={period!r}.")
 
+    #
+    # Retrieve the close prices and remove missing values
+    #
     closes = history["Close"].dropna()
 
+    # QA
     if closes.empty:
         raise RuntimeError("VIX close data was returned but contained no valid values.")
 
+    #
+    # Retrieve the most current VIX as the last entry in the close
+    # price column
+    #
     vix = float(closes.iloc[-1])
 
+    # QA
     if not math.isfinite(vix):
         raise RuntimeError(f"Invalid VIX value returned: {vix!r}.")
 
+    # QA
     if vix < 0.0:
         raise RuntimeError(f"Unexpected negative VIX value returned: {vix!r}.")
 
+    #
+    # Classify the VIX into a warning-level color group
+    #
     color = classify_vix(vix)
 
+    #
+    # Organize result according to the 
+    # above-defined schema and return
+    #
     return VixResult(
         symbol=symbol,
         period=period,
