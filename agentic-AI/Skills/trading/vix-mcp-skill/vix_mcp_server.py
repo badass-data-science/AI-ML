@@ -1,3 +1,6 @@
+#
+# Load useful libraries
+#
 from __future__ import annotations
 
 import math
@@ -7,12 +10,19 @@ import yfinance as yf
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
-
+#
+# Declare global color types
+#
 Color = Literal["green", "yellow", "red"]
 
+#
+# Initiate an MCP server object
+#
 mcp = FastMCP("vix-market-indicator")
 
-
+#
+# Define a schema for tool results
+#
 class VixResult(BaseModel):
     """Structured result returned by the VIX MCP tool."""
 
@@ -24,7 +34,9 @@ class VixResult(BaseModel):
     )
     interpretation: str = Field(description="Plain-English interpretation of the VIX level.")
 
-
+#
+# Define a function for classifying VIX values by warning color
+#
 def classify_vix(vix: float) -> Color:
     """Classify VIX into a simple color-based volatility regime."""
 
@@ -34,7 +46,9 @@ def classify_vix(vix: float) -> Color:
         return "yellow"
     return "green"
 
-
+#
+# Provide a prose description of each color warning
+#
 def explain_color(color: Color) -> str:
     """Return a simple human-readable explanation for the color classification."""
 
