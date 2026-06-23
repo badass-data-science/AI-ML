@@ -114,12 +114,16 @@ def get_most_recent_vix(period: str = "7d") -> VixResult:
         interpretation=explain_color(color),
     )
 
-
+#
+# Main function
+#
 def main() -> None:
     """Run the MCP server over stdio."""
 
     mcp.run(transport="stdio")
 
-
+#
+# Entry point if invoked from shell
+#
 if __name__ == "__main__":
     main()
