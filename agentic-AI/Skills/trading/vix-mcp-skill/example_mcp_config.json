@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "vix-market-indicator": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/ABSOLUTE/PATH/TO/vix-mcp-skill",
+        "run",
+        "vix_mcp_server.py"
+      ]
+    }
+  }
+}
