@@ -1,6 +1,8 @@
 
 
 
+
+
 ##############################
 #   Emily's root additions   #
 ##############################
@@ -48,10 +50,35 @@ ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"
 # verify brew installation
 RUN brew --version
 
-# install dependencies
+#
+# install python libraries
+#
+RUN pip install --break-system-packages --no-cache-dir numpy
 RUN pip install --break-system-packages --no-cache-dir pandas
+RUN pip install --break-system-packages --no-cache-dir scipy
+RUN pip install --break-system-packages --no-cache-dir statsmodels
+RUN pip install --break-system-packages --no-cache-dir scikit-learn
+RUN pip install --break-system-packages --no-cache-dir scikit-fuzzy
+RUN pip install --break-system-packages --no-cache-dir matplotlib
+
+RUN pip install --break-system-packages --no-cache-dir requests
 RUN pip install --break-system-packages --no-cache-dir feedparser
 RUN pip install --break-system-packages --no-cache-dir papermill
-RUN pip install --break-system-packages --no-cache-dir requests
+RUN pip install --break-system-packages --no-cache-dir "mcp[cli]>=1.2.0,<2"
+RUN pip install --break-system-packages --no-cache-dir yfinance
+RUN pip install --break-system-packages --no-cache-dir pydantic
+
+#
+# pull GitHub repositories
+#
+RUN cd
+RUN git clone https://github.com/badass-data-science/python-tools-and-shortcuts.git
+
+# Python path
+ENV PYTHONPATH=/home/node/python-tools-and-shortcuts
+
+
+
+
 
 
