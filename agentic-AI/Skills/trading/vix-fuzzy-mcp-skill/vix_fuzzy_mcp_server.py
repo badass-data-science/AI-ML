@@ -90,11 +90,8 @@ def get_fuzzy_set_membership_of_most_recent_vix() -> Result:
 def main() -> None:
     """Run the MCP server over stdio."""
 
-    #mcp.run(transport="stdio")
-
-    print(get_fuzzy_set_membership_of_most_recent_vix().model_dump_json(indent = 2))
-
-
+    #print(get_fuzzy_set_membership_of_most_recent_vix().model_dump_json(indent = 2))
+    mcp.run(transport="stdio")
     
 #
 # entry point
