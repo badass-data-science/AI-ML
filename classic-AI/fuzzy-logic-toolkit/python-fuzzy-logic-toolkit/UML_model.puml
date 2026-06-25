@@ -1,0 +1,94 @@
+@startuml
+
+abstract class MembershipFunction {
+  #_typical_value : float
+  +get_membership(x: float) : float {abstract}
+  +get_typical_value() : float
+}
+
+class StandardMBF_Z {
+  -_min : float
+  -_max : float
+  -_slope : float
+  -_y_intercept : float
+  +__init__(min: float, max: float)
+  +get_membership(x: float) : float
+}
+
+class StandardMBF_S {
+  -_min : float
+  -_max : float
+  -_slope : float
+  -_y_intercept : float
+  +__init__(min: float, max: float)
+  +get_membership(x: float) : float
+}
+
+class StandardMBF_Lambda {
+  -_min : float
+  -_mid : float
+  -_max : float
+  -_slope_up : float
+  -_y_intercept_up : float
+  -_slope_down : float
+  -_y_intercept_down : float
+  +__init__(min: float, mid: float, max: float)
+  +get_membership(x: float) : float
+}
+
+class StandardMBF_Pi {
+  -_min : float
+  -_lower_mid : float
+  -_higher_mid : float
+  -_max : float
+  -_slope_up : float
+  -_y_intercept_up : float
+  -_slope_down : float
+  -_y_intercept_down : float
+  +__init__(min: float, lower_mid: float, higher_mid: float, max: float)
+  +get_membership(x: float) : float
+}
+
+class LinguisticSet {
+  -_name : str
+  -_membership_function : MembershipFunction
+  +__init__(membership_function: MembershipFunction, name: str)
+  +get_membership_function() : MembershipFunction
+  +get_name() : str
+}
+
+class LinguisticDomain {
+  -_name : str
+  -_linguistic_set_list : list[LinguisticSet]
+  +__init__(name: str)
+  +add_linguistic_set(LinguisticSet) : None
+  +get_membership(x: float, name: str = None) : list[float] | float
+  +get_number_of_linguistic_sets() : int
+  +get_linguistic_set_list() : list[LinguisticSet]
+}
+
+class FuzzyValue {
+  -_linguistic_domain : LinguisticDomain
+  -_values : list[float]
+  +__init__(linguistic_domain: LinguisticDomain)
+  +set_crisp_value(x: float) : None
+  +get_crisp_value() : float
+  +set_set_membership(x: float, name: str) : None
+  +get_set_membership(name: str) : float
+  +clear() : None
+  +AND(name_a: str, other: FuzzyValue, name_b: str) : float
+  +OR_set_set_membership(x: float, name: str) : None
+}
+
+MembershipFunction <|-- StandardMBF_Z
+MembershipFunction <|-- StandardMBF_S
+MembershipFunction <|-- StandardMBF_Lambda
+MembershipFunction <|-- StandardMBF_Pi
+
+LinguisticSet o-- MembershipFunction : _membership_function\n0..1
+
+LinguisticDomain o-- LinguisticSet : _linguistic_set_list\n0..*
+
+FuzzyValue o-- LinguisticDomain : _linguistic_domain\n0..1
+
+@enduml
