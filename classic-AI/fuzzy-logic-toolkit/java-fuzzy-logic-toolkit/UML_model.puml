@@ -1,0 +1,95 @@
+@startuml
+
+abstract class MembershipFunction {
+  #typicalValue : double
+  +getMembership(double) : double {abstract}
+  +getTypicalValue() : double
+}
+
+class StandardMBF_Z {
+  -min : double
+  -max : double
+  -slope : double
+  -yIntercept : double
+  +StandardMBF_Z(double min, double max)
+  +getMembership(double x) : double
+}
+
+class StandardMBF_S {
+  -min : double
+  -max : double
+  -slope : double
+  -yIntercept : double
+  +StandardMBF_S(double min, double max)
+  +getMembership(double x) : double
+}
+
+class StandardMBF_Lambda {
+  -min : double
+  -mid : double
+  -max : double
+  -slopeUp : double
+  -yInterceptUp : double
+  -slopeDown : double
+  -yInterceptDown : double
+  +StandardMBF_Lambda(double min, double mid, double max)
+  +getMembership(double x) : double
+}
+
+class StandardMBF_Pi {
+  -min : double
+  -lowerMid : double
+  -higherMid : double
+  -max : double
+  -slopeUp : double
+  -yInterceptUp : double
+  -slopeDown : double
+  -yInterceptDown : double
+  +StandardMBF_Pi(double min, double lowerMid, double higherMid, double max)
+  +getMembership(double x) : double
+}
+
+class LinguisticSet {
+  -name : String
+  -membershipFunction : MembershipFunction
+  +LinguisticSet(MembershipFunction, String name)
+  +getMembershipFunction() : MembershipFunction
+  +getName() : String
+}
+
+class LinguisticDomain {
+  -name : String
+  -linguisticSetList : List<LinguisticSet>
+  +LinguisticDomain(String name)
+  +addLinguisticSet(LinguisticSet) : void
+  +getMembership(double x) : List<Double>
+  +getMembership(double x, String name) : double
+  +getNumberOfLinguisticSets() : int
+  +getLinguisticSetList() : List<LinguisticSet>
+}
+
+class FuzzyValue {
+  -linguisticDomain : LinguisticDomain
+  -values : double[]
+  +FuzzyValue(LinguisticDomain)
+  +setCrispValue(double x) : void
+  +getCrispValue() : double
+  +setSetMembership(double x, String name) : void
+  +getSetMembership(String name) : double
+  +clear() : void
+  +AND(String nameA, FuzzyValue other, String nameB) : double
+  +OR_setSetMembership(double x, String name) : void
+}
+
+MembershipFunction <|-- StandardMBF_Z
+MembershipFunction <|-- StandardMBF_S
+MembershipFunction <|-- StandardMBF_Lambda
+MembershipFunction <|-- StandardMBF_Pi
+
+LinguisticSet o-- MembershipFunction : membershipFunction\n0..1
+
+LinguisticDomain o-- LinguisticSet : linguisticSetList\n0..*
+
+FuzzyValue o-- LinguisticDomain : linguisticDomain\n0..1
+
+@enduml
