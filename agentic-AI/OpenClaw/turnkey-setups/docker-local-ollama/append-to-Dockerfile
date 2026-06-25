@@ -26,6 +26,20 @@ RUN apt install -y build-essential git procps file
 RUN useradd -m -s /bin/bash linuxbrew
 RUN echo 'linuxbrew ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
+
+
+############################
+#   Emily's uv additions   #
+############################
+
+USER node
+RUN cd
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+
+
+
+
 ###################################
 #   Emily's linuxbrew additions   #
 ###################################
@@ -68,14 +82,15 @@ RUN pip install --break-system-packages --no-cache-dir "mcp[cli]>=1.2.0,<2"
 RUN pip install --break-system-packages --no-cache-dir yfinance
 RUN pip install --break-system-packages --no-cache-dir pydantic
 
-#
-# pull GitHub repositories
-#
-RUN cd
-RUN git clone https://github.com/badass-data-science/python-tools-and-shortcuts.git
+# Install python-tools-and-shortcuts.
+# If the repo is public, use the GitHub URL directly:
+RUN pip install --break-system-packages --no-cache-dir \
+    git+https://github.com/badass-data-science/python-tools-and-shortcuts.git
+# If the repo is private, copy the repo into the image first and install locally instead:
+#   COPY python-tools-and-shortcuts /opt/python-tools-and-shortcuts
+#   RUN pip install --break-system-packages --no-cache-dir /opt/python-tools-and-shortcuts
 
-# Python path
-ENV PYTHONPATH=/home/node/python-tools-and-shortcuts
+
 
 
 
