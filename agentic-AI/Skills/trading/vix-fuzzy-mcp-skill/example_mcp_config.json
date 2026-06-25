@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "vix-fuzzy-indicator": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/ABSOLUTE/PATH/TO/vix-fuzzy-mcp-skill",
+        "run",
+        "vix_fuzzy_mcp_server.py"
+      ]
+    }
+  }
+}
