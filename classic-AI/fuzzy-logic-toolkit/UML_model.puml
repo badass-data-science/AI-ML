@@ -1,0 +1,95 @@
+@startuml
+
+abstract class MembershipFunction {
+  #typical_value : long double
+  +getMembership(long double) : long double {abstract}
+  +getTypicalValue() : long double
+}
+
+class StandardMBF_Z {
+  #min : long double
+  #max : long double
+  #slope : long double
+  #y_intercept : long double
+  +StandardMBF_Z(long double, long double)
+  +getMembership(long double) : long double
+}
+
+class StandardMBF_S {
+  #min : long double
+  #max : long double
+  #slope : long double
+  #y_intercept : long double
+  +StandardMBF_S(long double, long double)
+  +getMembership(long double) : long double
+}
+
+class StandardMBF_Lambda {
+  #min : long double
+  #mid : long double
+  #max : long double
+  #slope_up : long double
+  #y_intercept_up : long double
+  #slope_down : long double
+  #y_intercept_down : long double
+  +StandardMBF_Lambda(long double, long double, long double)
+  +getMembership(long double) : long double
+}
+
+class StandardMBF_Pi {
+  #min : long double
+  #lower_mid : long double
+  #higher_mid : long double
+  #max : long double
+  #slope_up : long double
+  #y_intercept_up : long double
+  #slope_down : long double
+  #y_intercept_down : long double
+  +StandardMBF_Pi(long double, long double, long double, long double)
+  +getMembership(long double) : long double
+}
+
+class LinguisticSet {
+  #name : string
+  #membership_function : MembershipFunction*
+  +LinguisticSet(MembershipFunction*, string)
+  +getMembershipFunction() : MembershipFunction*
+  +getName() : string
+}
+
+class LinguisticDomain {
+  #name : string
+  #linguistic_set_list : vector<LinguisticSet*>
+  +LinguisticDomain(string)
+  +addLinguisticSet(LinguisticSet*) : void
+  +getMembership(long double) : vector<long double>
+  +getMembership(long double, string) : long double
+  +getNumberOfLinguisticSets() : int
+  +getLinguisticSetList() : vector<LinguisticSet*>
+}
+
+class FuzzyValue {
+  #linguistic_domain : LinguisticDomain*
+  #values : vector<long double>
+  +FuzzyValue(LinguisticDomain*)
+  +setCrispValue(long double) : void
+  +getCrispValue() : long double
+  +setSetMembership(long double, string) : void
+  +getSetMembership(string) : long double
+  +clear() : void
+  +AND(string, FuzzyValue*, string) : long double
+  +OR_setSetMembership(long double, string) : void
+}
+
+MembershipFunction <|-- StandardMBF_Z
+MembershipFunction <|-- StandardMBF_S
+MembershipFunction <|-- StandardMBF_Lambda
+MembershipFunction <|-- StandardMBF_Pi
+
+LinguisticSet o-- MembershipFunction : membership_function\n0..1
+
+LinguisticDomain o-- LinguisticSet : linguistic_set_list\n0..*
+
+FuzzyValue o-- LinguisticDomain : linguistic_domain\n0..1
+
+@enduml
