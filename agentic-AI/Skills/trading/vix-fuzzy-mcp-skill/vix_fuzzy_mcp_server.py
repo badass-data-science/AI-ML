@@ -79,9 +79,9 @@ def get_fuzzy_set_membership_of_most_recent_vix() -> Result:
     dict_result = {
         'VIX ordinal increasing fuzzy set names' : list_increasingly_ordered_set_names,
         'VIX fuzzy set membership' : dict_interpolation,
+        'VIX' : vix,
     }
     
-    #return Result(**dict_interpolation)
     return Result(**dict_result)
 
 #
