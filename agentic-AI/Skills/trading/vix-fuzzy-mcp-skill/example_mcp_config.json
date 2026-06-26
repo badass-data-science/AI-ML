@@ -3,7 +3,7 @@
     "vix-fuzzy-indicator": {
       "command": "python3",
       "args": [
-        "/ABSOLUTE/PATH/TO/vix-fuzzy-mcp-skill/vix_fuzzy_mcp_server.py"
+        "/home/node/.openclaw/workspace/skills/vix-fuzzy-mcp-skill/vix_fuzzy_mcp_server.py"
       ]
     }
   }
