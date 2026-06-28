@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "risk-desk": {
+      "command": "python3",
+      "args": [
+        "/home/node/.openclaw/workspace/skills/risk-desk-mcp-skill/risk_desk_mcp_server.py"
+      ]
+    }
+  }
+}
