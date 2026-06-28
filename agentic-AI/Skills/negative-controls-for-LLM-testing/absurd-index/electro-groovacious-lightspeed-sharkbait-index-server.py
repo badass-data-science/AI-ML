@@ -28,6 +28,9 @@ dict_membership_ranges = {
 
 sample_space = [0.0, 0.9893724130196829, -0.287716767226167, -0.9057022630804715, 0.5524353131676196, 0.741222010848596, -0.7748840413670406, -0.508670943852105, 0.9672296592260761, 0.23030567023061221, -0.99665890175417]
 
+range_min = min(-1., min(sample_space))
+range_max = max(1.5, max(sample_space))
+
 #
 # Initialize an MCP server object
 #
@@ -69,7 +72,7 @@ def get_fuzzy_set_membership_of_most_recent_electro_groovacious_lightspeed_shark
     """
     
     #eglsi = random.choice(sample_space)
-    eglsi = 0.72
+    eglsi = 0.51
     
     fi = FuzzyInterpolator(list_increasingly_ordered_set_names, dict_membership_ranges)
     dict_interpolation = fi.interpolate_membership(eglsi)
@@ -78,6 +81,10 @@ def get_fuzzy_set_membership_of_most_recent_electro_groovacious_lightspeed_shark
         'Electro-Groovacious Lightspeed Sharkbait Index ordinal increasing fuzzy set names' : list_increasingly_ordered_set_names,
         'Electro-Groovacious Lightspeed Sharkbait Index fuzzy set membership' : dict_interpolation,
         'Electro-Groovacious Lightspeed Sharkbait Index' : eglsi,
+        'Electro-Groovacious Lightspeed Sharkbait Index value range' : {
+            'minimum' : str(range_min),
+            'maximum' : str(range_max),  # use of str allows phrases like 'positive infinity'
+        },
     }
     
     return Result(**dict_result)
