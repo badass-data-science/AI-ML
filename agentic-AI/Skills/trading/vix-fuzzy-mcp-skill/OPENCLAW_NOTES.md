@@ -24,6 +24,6 @@ Then reset your session with the command ```/reset```.
 
 ## Test Prompts
   
-What are the latest fuzzy VIX set memberships? Use the fuzzy VIX market indicator tool.
-  
+What are the latest fuzzy VIX set memberships? Use the fuzzy VIX indicator tool to answer this question. Please also interpret these results. Thank you!
+
 Call get_fuzzy_set_membership_of_most_recent_vix and explain the result.
