@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import datetime
 import math
+import os
 from pathlib import Path
 from typing import Literal
+from urllib.parse import parse_qs, urlparse
 
 import clips
+import oandapyV20
+import oandapyV20.endpoints.accounts as v20_accounts
+import oandapyV20.endpoints.transactions as v20_transactions
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 from python_tools_and_shortcuts.ai.fuzzylogic.FuzzyInterpolator import FuzzyInterpolator
@@ -43,6 +49,46 @@ def _dominant_vix_set(memberships: dict[str, float]) -> str:
     """Return the fuzzy set with the highest membership degree.
     Ties are broken toward the higher-indexed (more conservative) set."""
     return max(memberships, key=lambda s: (memberships[s], _VIX_SET_NAMES.index(s)))
+
+
+# ---------------------------------------------------------------------------
+# Oanda account helpers — mirrors oanda-account-mcp-skill exactly
+# ---------------------------------------------------------------------------
+
+def _oanda_client() -> tuple[oandapyV20.API, str]:
+    token       = os.environ["OANDA_API_TOKEN"]
+    account_id  = os.environ["OANDA_ACCOUNT_ID"]
+    environment = os.environ.get("OANDA_ENVIRONMENT", "practice")
+    return oandapyV20.API(access_token=token, environment=environment), account_id
+
+
+def _week_start_rfc3339() -> str:
+    today  = datetime.date.today()
+    monday = today - datetime.timedelta(days=today.weekday())
+    dt     = datetime.datetime(monday.year, monday.month, monday.day,
+                               tzinfo=datetime.timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+
+
+def _weekly_realized_pl(client: oandapyV20.API, account_id: str) -> float:
+    params = {"from": _week_start_rfc3339(), "pageSize": 1000}
+    r = v20_transactions.TransactionList(account_id, params=params)
+    client.request(r)
+
+    total_pl = 0.0
+    for page_url in r.response.get("pages", []):
+        qs      = parse_qs(urlparse(page_url).query)
+        from_id = qs["from"][0]
+        to_id   = qs["to"][0]
+        r2 = v20_transactions.TransactionIDRange(
+            account_id, params={"from": from_id, "to": to_id}
+        )
+        client.request(r2)
+        for tx in r2.response.get("transactions", []):
+            if "pl" in tx:
+                total_pl += float(tx["pl"])
+
+    return total_pl
 
 RULES_DIR = Path(__file__).parent / "clips_rules"
 
@@ -148,6 +194,48 @@ def get_market_regime() -> MarketRegime:
     regime = _FUZZY_SET_TO_REGIME[dominant]
 
     return MarketRegime(vix_level=vix, regime=regime)
+
+
+@mcp.tool()
+def get_account_state() -> AccountState:
+    """
+    Retrieve current Oanda account state for use with evaluate_trade().
+
+    Fetches the account summary via the Oanda v20 REST API and aggregates
+    realized P&L from all transactions since Monday 00:00:00 UTC to compute
+    the current weekly drawdown.
+
+    Required environment variables:
+        OANDA_API_TOKEN    — v20 API bearer token
+        OANDA_ACCOUNT_ID   — account ID (e.g. 001-001-XXXXXXX-001)
+
+    Optional environment variables:
+        OANDA_ENVIRONMENT  — 'practice' or 'live'  (default: 'practice')
+
+    This tool is informational only and is not financial advice.
+    """
+    client, account_id = _oanda_client()
+
+    r = v20_accounts.AccountSummary(account_id)
+    client.request(r)
+    summary = r.response["account"]
+
+    balance        = float(summary["balance"])
+    open_positions = int(summary.get("openPositionCount", 0))
+
+    weekly_pl = _weekly_realized_pl(client, account_id)
+
+    if weekly_pl < 0.0:
+        week_open_balance   = balance - weekly_pl
+        weekly_drawdown_pct = round(abs(weekly_pl) / week_open_balance * 100.0, 4)
+    else:
+        weekly_drawdown_pct = 0.0
+
+    return AccountState(
+        balance=balance,
+        weekly_drawdown_pct=weekly_drawdown_pct,
+        open_positions=open_positions,
+    )
 
 
 @mcp.tool()

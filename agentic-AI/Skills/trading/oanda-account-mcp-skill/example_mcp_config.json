@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "oanda-account": {
+      "command": "python3",
+      "args": [
+        "/home/node/.openclaw/workspace/skills/oanda-account-mcp-skill/oanda_account_mcp_server.py"
+      ],
+      "env": {
+        "OANDA_API_TOKEN": "<your-token-here>",
+        "OANDA_ACCOUNT_ID": "<your-account-id-here>",
+        "OANDA_ENVIRONMENT": "practice"
+      }
+    }
+  }
+}
