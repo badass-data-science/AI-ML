@@ -24,9 +24,6 @@ Then reset your session with the command ```/reset```.
 
 ## Test Prompts
   
-What are the latest fuzzy Electro-Groovacious Lightspeed Sharkbait Index set memberships? Use the fuzzy Electro-Groovacious Lightspeed Sharkbait Index indicator tool to answer this question. Please also interpret these results with respect to corporate financial decision-making. Thank you!
-
 What are the latest fuzzy Electro-Groovacious Lightspeed Sharkbait Index set memberships? Use the fuzzy Electro-Groovacious Lightspeed Sharkbait Index indicator tool to answer this question. Please also interpret these results. Thank you!
-
 
 Call get_fuzzy_set_membership_of_most_recent_electro_groovacious_lightspeed_sharkbait_index and explain the result.
