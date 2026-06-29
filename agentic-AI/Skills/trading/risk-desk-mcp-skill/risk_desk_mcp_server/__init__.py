@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 import clips
 import oandapyV20
 import oandapyV20.endpoints.accounts as v20_accounts
+import oandapyV20.endpoints.pricing as v20_pricing
 import oandapyV20.endpoints.transactions as v20_transactions
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
@@ -89,6 +90,24 @@ def _weekly_realized_pl(client: oandapyV20.API, account_id: str) -> float:
                 total_pl += float(tx["pl"])
 
     return total_pl
+
+
+def _pair_to_oanda(pair: str) -> str:
+    return pair.replace("/", "_")
+
+
+def _current_session() -> str:
+    hour = datetime.datetime.now(datetime.timezone.utc).hour
+    if hour < 7:
+        return "tokyo"
+    if hour < 12:
+        return "london"
+    if hour < 16:
+        return "overlap"
+    if hour < 21:
+        return "new-york"
+    return "sydney"
+
 
 RULES_DIR = Path(__file__).parent / "clips_rules"
 
@@ -236,6 +255,47 @@ def get_account_state() -> AccountState:
         weekly_drawdown_pct=weekly_drawdown_pct,
         open_positions=open_positions,
     )
+
+
+@mcp.tool()
+def get_pair_liquidity(pair: MAJOR_PAIRS) -> PairLiquidity:
+    """
+    Fetch the current bid/ask spread for a forex major pair and infer the
+    active trading session from UTC time.
+
+    Spread is retrieved live from the Oanda v20 pricing endpoint and
+    expressed in pips (0.0001 per pip for most pairs; 0.01 for JPY pairs).
+    Session is inferred using standard interbank open/close times:
+
+        Tokyo    00:00–07:00 UTC
+        London   07:00–12:00 UTC
+        Overlap  12:00–16:00 UTC  (London + New York both open)
+        New York 16:00–21:00 UTC
+        Sydney   21:00–00:00 UTC
+
+    Returns a PairLiquidity that can be passed directly to evaluate_trade().
+
+    Required environment variables:
+        OANDA_API_TOKEN   — v20 API bearer token
+        OANDA_ACCOUNT_ID  — account ID (e.g. 001-001-XXXXXXX-001)
+
+    Optional environment variables:
+        OANDA_ENVIRONMENT — 'practice' or 'live'  (default: 'practice')
+
+    This tool is informational only and is not financial advice.
+    """
+    client, account_id = _oanda_client()
+
+    r = v20_pricing.PricingInfo(account_id, params={"instruments": _pair_to_oanda(pair)})
+    client.request(r)
+
+    price     = r.response["prices"][0]
+    bid       = float(price["closeoutBid"])
+    ask       = float(price["closeoutAsk"])
+    pip_size  = 0.01 if "JPY" in pair else 0.0001
+    spread_pips = round((ask - bid) / pip_size, 1)
+
+    return PairLiquidity(pair=pair, spread_pips=spread_pips, session=_current_session())
 
 
 @mcp.tool()
