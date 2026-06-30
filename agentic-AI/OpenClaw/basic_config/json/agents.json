@@ -1,0 +1,14 @@
+{
+    "defaults": {
+	"workspace": "/home/node/.openclaw/workspace",
+	"model": {
+	    "primary": "ollama/qwen3.6:35b"
+	},
+	"models": {
+	    "ollama/qwen3.6:35b": {}
+	},
+	"sandbox": {
+	    "mode": "off"
+	}
+    }
+}

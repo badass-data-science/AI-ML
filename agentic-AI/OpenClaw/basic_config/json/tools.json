@@ -1,0 +1,9 @@
+{
+    "profile": "coding",
+    "web": {
+	"search": {
+            "provider": "brave",
+            "enabled": true
+	}
+    }
+}

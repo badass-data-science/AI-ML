@@ -1,0 +1,15 @@
+{
+    "entries": {
+	"ollama": {
+            "enabled": true
+	},
+	"brave": {
+            "config": {
+		"webSearch": {
+		    "apiKey": "123456"
+		}
+            },
+            "enabled": true
+	}
+    }
+}
