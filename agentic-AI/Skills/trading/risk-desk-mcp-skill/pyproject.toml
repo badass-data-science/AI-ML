@@ -16,6 +16,12 @@ dependencies = [
 [tool.uv.sources]
 python-tools-and-shortcuts = { git = "https://github.com/badass-data-science/python-tools-and-shortcuts.git" }
 
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [project.scripts]
 risk-desk-mcp-server = "risk_desk_mcp_server:main"
 
