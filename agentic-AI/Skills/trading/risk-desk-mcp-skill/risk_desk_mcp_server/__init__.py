@@ -123,6 +123,7 @@ def _load_rules() -> None:
     _env.load(str(RULES_DIR / "regime_rules.clp"))
     _env.load(str(RULES_DIR / "drawdown_rules.clp"))
     _env.load(str(RULES_DIR / "liquidity_rules.clp"))
+    _env.load(str(RULES_DIR / "concentration_rules.clp"))
 
 
 # ---------------------------------------------------------------------------

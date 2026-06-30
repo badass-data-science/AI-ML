@@ -34,5 +34,5 @@
   (assert (risk-verdict
     (result   MODIFIED)
     (rule-id  "REGIME-002")
-    (reason   (str-cat "Elevated VIX: requested size of " ?s "% exceeds 1.0% limit for elevated regime — reduce position"))
+    (reason   (str-cat "Elevated VIX: requested size of " ?s "% exceeds 1.0% cap for elevated regime — reduce to 1.0% or below"))
     (severity warning))))

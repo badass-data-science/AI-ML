@@ -23,11 +23,13 @@ LLM agent proposes trade (natural language)
 | Category | Rule IDs | Description |
 |----------|----------|-------------|
 | Regime-gated | REGIME-001a/b | Block risk-on trades when VIX is in crisis |
-| Regime-gated | REGIME-002 | Reduce position size during elevated VIX |
+| Regime-gated | REGIME-002 | Cap position size at 1.0% during elevated VIX |
 | Circuit breaker | DD-001 | Hard halt when weekly drawdown ≥ 5% |
 | Circuit breaker | DD-002 | Soft warning when weekly drawdown ≥ 3% |
 | Liquidity | LIQ-001 | Block when spread exceeds 3.0 pips |
 | Liquidity | LIQ-002 | Warn when trading European pairs in Tokyo session |
+| Concentration | CONC-001 | Hard block when 5 or more positions are open |
+| Concentration | CONC-002 | Soft warning when 3–4 positions are open |
 
 ## Covered pairs
 
