@@ -57,7 +57,7 @@ rm .env
 
 cat $OPENCLAW_TURNKEY_SETUP_HOME/append-to-Dockerfile >> Dockerfile
 
-docker build -t openclaw:local -f Dockerfile .
+docker build --no-cache -t openclaw:local -f Dockerfile .
 
 papermill $OPENCLAW_TURNKEY_SETUP_HOME/configure-OpenClaw.ipynb /tmp/configure-OpenClaw.OUTPUT.ipynb
 
