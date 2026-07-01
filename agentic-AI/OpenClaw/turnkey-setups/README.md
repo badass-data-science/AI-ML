@@ -74,6 +74,8 @@ openclaw completion --shell zsh --install --yes
 openclaw gateway restart
 
 exit
+
+grep -i OPENCLAW_GATEWAY_TOKEN .env
 ```
 
 ## Access the OpenClaw Webapp
