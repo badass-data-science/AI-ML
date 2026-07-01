@@ -47,8 +47,8 @@ trading recommendations, or portfolio management guidance.
 Requires Python 3.10+ and the following Python packages:
 
 - `mcp[cli]`
-- `yfinance`
 - `pydantic`
+- `vix-fuzzy-shared` — shared VIX fetching and fuzzy set classification (pulls in `yfinance` and `python-tools-and-shortcuts` transitively)
 
 Run locally with:
 

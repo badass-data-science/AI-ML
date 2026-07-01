@@ -28,7 +28,7 @@ The three data-fetching tools (`get_market_regime`, `get_account_state`, `get_pa
 
 ### `get_market_regime() → MarketRegime`
 
-Fetches the current VIX close price (via yfinance) and classifies it into one of four regime levels using fuzzy set membership — the same fuzzy set definitions used by the `vix-fuzzy-mcp-skill`, so regime classification is consistent across the trading skill suite.
+Fetches the current VIX close price and classifies it into one of four regime levels using fuzzy set membership, via the shared [`vix-fuzzy-shared`](../vix_fuzzy_shared) package — the same VIX fetching and fuzzy set classification logic used by `vix-fuzzy-mcp-skill`, so regime classification is consistent across the trading skill suite.
 
 | Regime | VIX range (approx.) | Dominant fuzzy set |
 |--------|--------------------|--------------------|
@@ -127,8 +127,7 @@ USD/CAD is the notable inversion: buying USD against a commodity currency is ris
 - [`mcp`](https://github.com/modelcontextprotocol/python-sdk) — Model Context Protocol server SDK
 - [`pydantic`](https://docs.pydantic.dev/) — structured input/output validation
 - [`oandapyV20`](https://github.com/hootnot/oanda-api-v20) — Oanda v20 REST API client
-- [`yfinance`](https://github.com/ranaroussi/yfinance) — VIX price data
-- [`python-tools-and-shortcuts`](https://github.com/badass-data-science/python-tools-and-shortcuts) — fuzzy logic interpolation utilities
+- [`vix-fuzzy-shared`](../vix_fuzzy_shared) — shared VIX fetching and fuzzy set classification, used by both `risk-desk-mcp-skill` and `vix-fuzzy-mcp-skill` (pulls in `yfinance` and `python-tools-and-shortcuts` transitively)
 
 ---
 
