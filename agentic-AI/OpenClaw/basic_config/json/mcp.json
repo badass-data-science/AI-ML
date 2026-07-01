@@ -1,0 +1,24 @@
+{
+    "servers": {
+	"risk-desk": {
+	    "transport": "stdio",
+	    "command": "uv",
+	    "args": ["run", "risk-desk-mcp-server"],
+	    "cwd": "/home/node/.openclaw/mcp-skills/risk-desk-mcp-skill",
+	    "env": {
+		"OANDA_API_TOKEN": "4dfa51cffdaf10c4b9f274f7d706c40e-28713039c3cf96aa4351ae6a79354a3c",
+		"OANDA_ACCOUNT_ID": "101-001-6544960-001",
+		"OANDA_ENVIRONMENT": "practice"
+	    }
+	},
+	"vix-fuzzy-indicator": {
+	    "transport": "stdio",
+	    "command": "/usr/bin/python3",
+	    "args": ["vix_fuzzy_mcp_server.py"],
+	    "cwd": "/home/node/.openclaw/workspace/skills/vix-fuzzy-mcp-skill",
+	    "toolFilter": {
+		"include": ["get_fuzzy_set_membership_of_most_recent_vix"]
+	    }
+	}
+    }
+}

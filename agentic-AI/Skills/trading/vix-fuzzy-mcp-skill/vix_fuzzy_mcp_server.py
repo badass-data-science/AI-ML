@@ -2,7 +2,6 @@
 # load useful system libraries
 #
 from __future__ import annotations
-import math
 from pydantic import BaseModel, ConfigDict
 from typing import Dict
 from mcp.server.fastmcp import FastMCP
@@ -10,23 +9,7 @@ from mcp.server.fastmcp import FastMCP
 #
 # load useful local libraries
 #
-from python_tools_and_shortcuts.ai.fuzzylogic.FuzzyInterpolator import FuzzyInterpolator
-from python_tools_and_shortcuts.econometrics.ticker_prices import get_most_recent_ticker_close_value
-
-#
-# user settings
-#
-list_increasingly_ordered_set_names = ['very low', 'low', 'medium low', 'medium', 'medium high', 'high', 'very high']
-
-dict_membership_ranges = {
-    'very low': [9.140000343322754, 12.869999885559082],
-    'low': [9.140000343322754, 12.869999885559082, 15.0600004196167],
-    'medium low': [12.869999885559082, 15.0600004196167, 17.450000762939453],
-    'medium': [15.0600004196167, 17.450000762939453, 20.649999618530273],
-    'medium high': [17.450000762939453, 20.649999618530273, 25.110000610351562],
-    'high': [20.649999618530273, 25.110000610351562, 82.69000244140625],
-    'very high': [25.110000610351562, 82.69000244140625],
-}
+from vix_fuzzy_shared import VIX_SET_NAMES, get_most_recent_vix, interpolate_vix_membership
 
 #
 # Initialize an MCP server object
@@ -63,21 +46,12 @@ def get_fuzzy_set_membership_of_most_recent_vix() -> Result:
         This tool is informational only and is not financial advice.
     """
     
-    vix = get_most_recent_ticker_close_value('^VIX')
-    
-    # QA
-    if not math.isfinite(vix):
-        raise RuntimeError(f"Invalid VIX value returned: {vix!r}.")
+    vix = get_most_recent_vix()
 
-    # QA
-    if vix < 0.0:
-        raise RuntimeError(f"Unexpected negative VIX value returned: {vix!r}.")
-
-    fi = FuzzyInterpolator(list_increasingly_ordered_set_names, dict_membership_ranges)
-    dict_interpolation = fi.interpolate_membership(vix)
+    dict_interpolation = interpolate_vix_membership(vix)
 
     dict_result = {
-        'VIX ordinal increasing fuzzy set names' : list_increasingly_ordered_set_names,
+        'VIX ordinal increasing fuzzy set names' : VIX_SET_NAMES,
         'VIX fuzzy set membership' : dict_interpolation['fuzzy set membership'],
         'VIX' : vix,
         'VIX value range' : dict_interpolation['value range'],

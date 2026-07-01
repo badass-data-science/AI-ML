@@ -16,6 +16,7 @@ from risk_desk_mcp_server import (
     _load_rules,
     _pair_to_oanda,
     evaluate_trade,
+    get_market_regime,
 )
 
 
@@ -98,6 +99,20 @@ class TestDominantVixSet:
 
     def test_single_entry(self):
         assert _dominant_vix_set({"very high": 1.0}) == "very high"
+
+
+class TestGetMarketRegime:
+    @pytest.mark.parametrize("vix,expected_regime", [
+        (10.0, "calm"),
+        (15.0, "normal"),
+        (25.0, "elevated"),
+        (80.0, "crisis"),
+    ])
+    def test_classifies_live_vix_value(self, vix, expected_regime):
+        with patch("risk_desk_mcp_server.get_most_recent_vix", return_value=vix):
+            result = get_market_regime()
+        assert result.vix_level == vix
+        assert result.regime == expected_regime
 
 
 # ---------------------------------------------------------------------------

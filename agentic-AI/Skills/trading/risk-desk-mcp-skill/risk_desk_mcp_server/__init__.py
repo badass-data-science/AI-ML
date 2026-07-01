@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-import math
 import os
 from pathlib import Path
 from typing import Literal
@@ -14,25 +13,12 @@ import oandapyV20.endpoints.pricing as v20_pricing
 import oandapyV20.endpoints.transactions as v20_transactions
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
-from python_tools_and_shortcuts.ai.fuzzylogic.FuzzyInterpolator import FuzzyInterpolator
-from python_tools_and_shortcuts.econometrics.ticker_prices import get_most_recent_ticker_close_value
+from vix_fuzzy_shared import VIX_SET_NAMES, get_most_recent_vix, interpolate_vix_membership
 
 # ---------------------------------------------------------------------------
-# VIX fuzzy configuration — mirrors vix-fuzzy-mcp-skill exactly so regime
-# classification is consistent across both skills
+# VIX regime configuration — VIX_SET_NAMES/interpolation come from
+# vix-fuzzy-shared so classification is consistent across both skills
 # ---------------------------------------------------------------------------
-
-_VIX_SET_NAMES = ['very low', 'low', 'medium low', 'medium', 'medium high', 'high', 'very high']
-
-_VIX_MEMBERSHIP_RANGES = {
-    'very low':   [9.140000343322754,  12.869999885559082],
-    'low':        [9.140000343322754,  12.869999885559082, 15.0600004196167],
-    'medium low': [12.869999885559082, 15.0600004196167,   17.450000762939453],
-    'medium':     [15.0600004196167,   17.450000762939453, 20.649999618530273],
-    'medium high':[17.450000762939453, 20.649999618530273, 25.110000610351562],
-    'high':       [20.649999618530273, 25.110000610351562, 82.69000244140625],
-    'very high':  [25.110000610351562, 82.69000244140625],
-}
 
 # Maps from dominant fuzzy set to the four Risk Desk regime levels
 _FUZZY_SET_TO_REGIME: dict[str, str] = {
@@ -49,7 +35,7 @@ _FUZZY_SET_TO_REGIME: dict[str, str] = {
 def _dominant_vix_set(memberships: dict[str, float]) -> str:
     """Return the fuzzy set with the highest membership degree.
     Ties are broken toward the higher-indexed (more conservative) set."""
-    return max(memberships, key=lambda s: (memberships[s], _VIX_SET_NAMES.index(s)))
+    return max(memberships, key=lambda s: (memberships[s], VIX_SET_NAMES.index(s)))
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +174,7 @@ def get_market_regime() -> MarketRegime:
     Fetch the current VIX value and classify it into a market regime using
     fuzzy set membership.
 
-    Uses the same fuzzy set definitions as the vix-fuzzy-mcp-skill so that
+    Uses vix-fuzzy-shared for VIX fetching and fuzzy classification, so
     regime classification is consistent across the trading skill suite.
 
     Regime levels:
@@ -201,15 +187,9 @@ def get_market_regime() -> MarketRegime:
 
     This tool is informational only and is not financial advice.
     """
-    vix = get_most_recent_ticker_close_value('^VIX')
+    vix = get_most_recent_vix()
 
-    if not math.isfinite(vix):
-        raise RuntimeError(f"Invalid VIX value returned: {vix!r}")
-    if vix < 0.0:
-        raise RuntimeError(f"Unexpected negative VIX value: {vix!r}")
-
-    fi = FuzzyInterpolator(_VIX_SET_NAMES, _VIX_MEMBERSHIP_RANGES)
-    memberships = fi.interpolate_membership(vix)
+    memberships = interpolate_vix_membership(vix)['fuzzy set membership']
     dominant = _dominant_vix_set(memberships)
     regime = _FUZZY_SET_TO_REGIME[dominant]
 

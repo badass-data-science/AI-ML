@@ -8,13 +8,12 @@ dependencies = [
     "mcp[cli]>=1.2.0,<2",
     "pydantic>=2,<3",
     "clipspy>=1.0.0",
-    "yfinance>=0.2.40",
-    "python-tools-and-shortcuts",
+    "vix-fuzzy-shared",
     "oandapyV20>=0.6.3",
 ]
 
 [tool.uv.sources]
-python-tools-and-shortcuts = { git = "https://github.com/badass-data-science/python-tools-and-shortcuts.git" }
+vix-fuzzy-shared = { path = "../vix_fuzzy_shared", editable = true }
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
