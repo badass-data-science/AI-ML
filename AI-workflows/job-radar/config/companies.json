@@ -1,0 +1,20 @@
+{
+  "_comment": "Placeholder schema examples only — these slugs are not verified real company board tokens. Replace with your real target companies before running `pull`. Find a company's slug by checking whether their careers page URL contains it (e.g. a Greenhouse-hosted page at job-boards.greenhouse.io/<slug>, a Lever-hosted page at jobs.lever.co/<slug>, or an Ashby-hosted page at jobs.ashbyhq.com/<slug>).",
+  "companies": [
+    {
+      "name": "Example Co (Greenhouse)",
+      "ats": "greenhouse",
+      "slug": "examplecogreenhouse"
+    },
+    {
+      "name": "Example Co (Lever)",
+      "ats": "lever",
+      "slug": "examplecolever"
+    },
+    {
+      "name": "Example Co (Ashby)",
+      "ats": "ashby",
+      "slug": "examplecoashby"
+    }
+  ]
+}
