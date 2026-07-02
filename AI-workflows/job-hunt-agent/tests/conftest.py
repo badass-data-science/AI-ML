@@ -419,9 +419,13 @@ def sample_llm_output() -> JobMatchLLMOutput:
         ],
         surfaced_bullets=[
             SurfacedBullet(
-                bullet_id="acme-dashboard",
+                # acme-genomics is used_in: bioinformatics only — genuinely
+                # absent from the data-science variant's Experience section,
+                # unlike acme-dashboard (used_in: data-science) which would
+                # have been a duplicate, not a real "surfaced" example.
+                bullet_id="acme-genomics",
                 employer="Acme Corp",
-                why_relevant="Shows stakeholder-facing delivery",
+                why_relevant="Shows structured data pipeline experience",
             )
         ],
         recommended_achievement_paragraph_ids=["acme-ml-prose"],

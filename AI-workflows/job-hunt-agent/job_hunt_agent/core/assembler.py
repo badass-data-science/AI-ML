@@ -74,9 +74,31 @@ def assemble_draft_resume(
         bullet_lookup = {b.bullet_id: b for b in vault.all_experience_bullets()}
         for sb in match.llm_output.surfaced_bullets:
             full = bullet_lookup.get(sb.bullet_id)
-            if full is not None:
-                surfaced_bullets.append({"bullet": full, "why_relevant": sb.why_relevant})
-        surfaced_skills = list(match.llm_output.surfaced_skills)
+            if full is None:
+                continue
+            if variant_slug in full.used_in:
+                # Ground-truth check, not LLM-trust: the vault's own `used_in`
+                # tag says this bullet is already in the recommended variant's
+                # Experience section, despite the LLM having called it
+                # "surfaced" (implying unused). Silently drop rather than
+                # render a bullet twice — the prompt asks the model not to do
+                # this, but compliance isn't guaranteed, so this is enforced
+                # deterministically here instead of trusted from the LLM output.
+                continue
+            surfaced_bullets.append({"bullet": full, "why_relevant": sb.why_relevant})
+
+        already_used_keywords = {
+            kw.lower()
+            for skill_file in vault.skills
+            for entry in skill_file.used_entries
+            if variant_slug in entry.variants
+            for kw in entry.keywords
+        }
+        surfaced_skills = [
+            s
+            for s in match.llm_output.surfaced_skills
+            if s.keyword.lower() not in already_used_keywords
+        ]
 
     projects = (
         [p for p in vault.projects if variant_slug in p.used_in]

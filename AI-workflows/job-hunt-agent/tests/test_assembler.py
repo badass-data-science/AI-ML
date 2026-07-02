@@ -64,12 +64,57 @@ class TestAssembleDraftResume:
         draft = assemble_draft_resume(match_result, loaded_vault, tmp_path, include_surfaced=True)
         text = draft.output_path.read_text()
         assert "NEW: surfaced by matcher" in text
-        assert "acme-dashboard" not in text or "why relevant" in text.lower()
+        assert "why relevant" in text.lower()
 
     def test_surfaced_content_excluded_when_disabled(self, loaded_vault, match_result, tmp_path):
         draft = assemble_draft_resume(match_result, loaded_vault, tmp_path, include_surfaced=False)
         text = draft.output_path.read_text()
         assert "NEW: surfaced by matcher" not in text
+
+    def test_surfaced_bullet_already_in_variant_is_dropped(
+        self, loaded_vault, sample_job_posting, sample_llm_output, tmp_path
+    ):
+        # Regression test for a real bug found during manual verification: the
+        # LLM sometimes claims a bullet is "surfaced" (implying unused) when
+        # the vault's own `used_in` tag says it's already in the recommended
+        # variant's Experience section. acme-ml-pipeline is used_in
+        # data-science (the recommended variant here) — it must never be
+        # rendered a second time under "Surfaced bullets".
+        from job_hunt_agent.core.models import SurfacedBullet
+
+        sample_llm_output.surfaced_bullets = [
+            SurfacedBullet(
+                bullet_id="acme-ml-pipeline", employer="Acme Corp", why_relevant="duplicate claim"
+            )
+        ]
+        match = JobMatchResult(job=sample_job_posting, llm_output=sample_llm_output)
+        draft = assemble_draft_resume(match, loaded_vault, tmp_path)
+        text = draft.output_path.read_text()
+        assert "NEW: surfaced by matcher" not in text
+        # the bullet's real text still appears exactly once, in Experience
+        assert text.count("Built and deployed machine learning pipelines") == 1
+
+    def test_surfaced_skill_already_in_variant_is_dropped(
+        self, loaded_vault, sample_job_posting, sample_llm_output, tmp_path
+    ):
+        # Same regression as above, for skills: "Python" is already used_in
+        # data-science per the fixture vault's ML Skills.md.
+        from job_hunt_agent.core.models import SurfacedSkill
+
+        sample_llm_output.surfaced_skills = [
+            SurfacedSkill(file_title="ML Skills", keyword="Python", why_relevant="duplicate claim"),
+            SurfacedSkill(
+                file_title="ML Skills", keyword="TensorFlow", why_relevant="genuinely unused"
+            ),
+        ]
+        match = JobMatchResult(job=sample_job_posting, llm_output=sample_llm_output)
+        draft = assemble_draft_resume(match, loaded_vault, tmp_path)
+        text = draft.output_path.read_text()
+        assert "Surfaced skills not yet in this resume" in text
+        assert "TensorFlow" in text
+        # Python must not appear in the surfaced-skills section specifically
+        surfaced_section = text.split("Surfaced skills not yet in this resume")[1].split("##")[0]
+        assert "Python" not in surfaced_section
 
     def test_projects_only_included_for_variant_with_selected_projects(
         self, loaded_vault, match_result, tmp_path
