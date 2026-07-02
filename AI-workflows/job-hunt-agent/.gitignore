@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Output (generated at runtime — includes real application data)
+output/
+
+# Environment
+.env
+*.egg-info/
+dist/
+build/

@@ -1,0 +1,20 @@
+<!-- Draft cover letter assembled by job-hunt-agent for {{ company or "?" }} / {{ role or "?" }} on {{ generated_at }}. Register: {{ register }}. Human review required before use. -->
+
+{{ salutation }}
+
+{{ opening_line }}
+
+[[WRITE COMPANY-SPECIFIC PARAGRAPH HERE — this paragraph structurally cannot be sourced from the vault library and must always be written fresh, per CoverLetters/INDEX.md]]
+
+{% for p in achievement_paragraphs %}
+{{ p.text }}
+
+{% endfor %}
+{% if soft_skill %}
+{{ soft_skill.text }}
+{% if soft_skill.needs_human_edit %}
+<!-- NOTE: this soft-skill block is flagged in the vault as synthesized, not from a real letter — review before using. -->
+{% endif %}
+{% endif %}
+
+{{ closing_text }}
