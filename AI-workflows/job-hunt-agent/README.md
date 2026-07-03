@@ -134,11 +134,13 @@ python -m job_hunt_agent.cli match --posting posting.txt --company Acme --role "
 # assemble a draft resume + cover letter from that match
 python -m job_hunt_agent.cli draft --match output/matches/acme-data-scientist-<date>/match.json
 
-# or do both in one step — the common real-world path
+# or do both in one step — the common real-world path. Also creates
+# resume-filled.md/cover_letter-filled.md automatically, the editable
+# copies to do your actual human-review pass into (--no-init-filled to skip)
 python -m job_hunt_agent.cli match-and-draft --posting posting.txt --company Acme --role "Data Scientist"
 
-# create editable copies to do the actual human-review pass into, so
-# re-running `draft` later never clobbers that work
+# re-create the *-filled.md copies standalone (e.g. after manually deleting
+# one, or with --force to intentionally reset one back to the pristine draft)
 python -m job_hunt_agent.cli init-filled --draft-dir output/drafts/acme-data-scientist-<date>
 
 # track what you actually send
@@ -184,7 +186,7 @@ logic.
 pytest tests/
 ```
 
-116 tests, all against a synthetic fixture vault built fresh under `tmp_path`
+120 tests, all against a synthetic fixture vault built fresh under `tmp_path`
 in `tests/conftest.py` — no test ever touches the real `vault-Resume`.
 `asyncio_mode = auto` (pytest.ini), same as `strategic-reports`.
 
@@ -206,7 +208,7 @@ job-hunt-agent/
 │       ├── guardrails.py       <- forbidden-term / excluded-skill scanning
 │       └── tracker.py          <- ApplicationStore, flat-JSON backed
 │   └── templates/               <- Jinja2 templates for the two draft documents
-├── tests/                       <- 116 tests, fixture-vault-only, no real-vault or real-LLM calls
+├── tests/                       <- 120 tests, fixture-vault-only, no real-vault or real-LLM calls
 └── output/                      <- gitignored; matches/, drafts/, tracker/ generated at runtime
 ```
 
@@ -214,7 +216,7 @@ job-hunt-agent/
 
 - `output/matches/{slug}/match.json` — the full `JobMatchResult` from a `match` run, re-loadable by `draft`.
 - `output/drafts/{slug}/resume.md`, `cover_letter.md` — assembled drafts, always marked as needing human review. Pristine, reproducible output of `draft` — safe to regenerate any time the match or the code changes, since nothing gets hand-edited into these directly.
-- `output/drafts/{slug}/resume-filled.md`, `cover_letter-filled.md` — created by `init-filled` as editable copies of the above. This is where the actual human-review pass happens (surfaced-content integration, the company-specific paragraph, closing-line specifics), so re-running `draft` never clobbers that work. Diffing `resume.md` against `resume-filled.md` shows exactly what changed for a given application.
+- `output/drafts/{slug}/resume-filled.md`, `cover_letter-filled.md` — editable copies of the above, created automatically by `match-and-draft` (or explicitly via `init-filled`). This is where the actual human-review pass happens (surfaced-content integration, the company-specific paragraph, closing-line specifics), so re-running `draft`/`match-and-draft` never clobbers that work. Diffing `resume.md` against `resume-filled.md` shows exactly what changed for a given application.
 - `output/tracker/applications.json` — the local application tracker.
 
 None of this is committed (`output/` is gitignored) — it's real, potentially

@@ -6,6 +6,8 @@ Usage:
     python -m job_hunt_agent.cli match --posting posting.txt --company Acme --role "Data Scientist" --url "https://..."
     python -m job_hunt_agent.cli draft --match output/matches/acme-data-scientist-2026-01-01/match.json
     python -m job_hunt_agent.cli init-filled --draft-dir output/drafts/acme-data-scientist-2026-01-01
+
+    # match-and-draft also creates resume-filled.md/cover_letter-filled.md automatically (pass --no-init-filled to skip)
     python -m job_hunt_agent.cli match-and-draft --posting posting.txt --company Acme --role "Data Scientist"
     python -m job_hunt_agent.cli track add --company Acme --role "Data Scientist" --variant data-science --register formal-professional
     python -m job_hunt_agent.cli track list
@@ -190,6 +192,29 @@ def draft_cmd(
             typer.echo(f"    - {w}")
 
 
+def _init_filled_files(draft_dir: Path, force: bool) -> tuple[list[Path], list[Path]]:
+    """Shared by init_filled_cmd and match_and_draft_cmd's automatic call.
+
+    Returns (created, skipped). Never overwrites an existing *-filled.md
+    unless force=True — this is what keeps a hand-review pass safe across a
+    later re-draft, whether that re-draft is invoked explicitly (`draft`) or
+    implicitly (`match-and-draft` run again for the same slug).
+    """
+    created: list[Path] = []
+    skipped: list[Path] = []
+    for base_name in ("resume.md", "cover_letter.md"):
+        source = draft_dir / base_name
+        if not source.is_file():
+            continue
+        target = draft_dir / f"{source.stem}-filled{source.suffix}"
+        if target.exists() and not force:
+            skipped.append(target)
+            continue
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        created.append(target)
+    return created, skipped
+
+
 @app.command("init-filled")
 def init_filled_cmd(
     draft_dir: Path = typer.Option(
@@ -211,19 +236,12 @@ def init_filled_cmd(
     than templated. Re-running `draft` never clobbers that work, and you can
     diff draft vs. filled to see exactly what changed for a given
     application, which is the point when doing this across many postings.
+
+    `match-and-draft` calls this automatically (pass --no-init-filled to
+    skip); this command is for running it standalone against an existing
+    draft directory, or re-running it with --force.
     """
-    created: list[Path] = []
-    skipped: list[Path] = []
-    for base_name in ("resume.md", "cover_letter.md"):
-        source = draft_dir / base_name
-        if not source.is_file():
-            continue
-        target = draft_dir / f"{source.stem}-filled{source.suffix}"
-        if target.exists() and not force:
-            skipped.append(target)
-            continue
-        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-        created.append(target)
+    created, skipped = _init_filled_files(draft_dir, force)
 
     if not created and not skipped:
         typer.echo(f"No resume.md or cover_letter.md found under {draft_dir}", err=True)
@@ -249,6 +267,11 @@ def match_and_draft_cmd(
         _DEFAULT_VAULT_PATH, "--vault-path", envvar="JOB_HUNT_AGENT_VAULT_PATH"
     ),
     home: Path = typer.Option(_DEFAULT_HOME, "--home", envvar="JOB_HUNT_AGENT_HOME"),
+    init_filled: bool = typer.Option(
+        True,
+        "--init-filled/--no-init-filled",
+        help="Also create resume-filled.md/cover_letter-filled.md (skipped if they already exist — never overwritten here).",
+    ),
 ) -> None:
     """Convenience: chain match + draft in one invocation — the common real-world path."""
     posting_text = _read_posting_text(posting)
@@ -276,6 +299,13 @@ def match_and_draft_cmd(
     if letter.warnings:
         for w in letter.warnings:
             typer.echo(f"  WARNING: {w}")
+
+    if init_filled:
+        created, skipped = _init_filled_files(output_dir, force=False)
+        for t in created:
+            typer.echo(f"Filled copy created: {t}")
+        for t in skipped:
+            typer.echo(f"Filled copy already exists, left untouched: {t}")
 
 
 def _tracker(tracker_path: Path) -> ApplicationStore:

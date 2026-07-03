@@ -229,6 +229,55 @@ class TestMatchAndDraftCmd:
         assert list((tmp_path / "output" / "drafts").rglob("resume.md"))
         assert list((tmp_path / "output" / "drafts").rglob("cover_letter.md"))
 
+    def _invoke_match_and_draft(self, fixture_vault, sample_llm_output, tmp_path, extra_args=()):
+        posting_file = tmp_path / "posting.txt"
+        posting_file.write_text("Data Scientist role requiring Python and ML.")
+        with patch("job_hunt_agent.cli.LLMClient", _mock_llm_client_class(sample_llm_output)):
+            return runner.invoke(
+                app,
+                [
+                    "match-and-draft",
+                    "--posting", str(posting_file),
+                    "--company", "Acme",
+                    "--role", "Data Scientist",
+                    "--vault-path", str(fixture_vault),
+                    "--home", str(tmp_path),
+                    *extra_args,
+                ],
+            )
+
+    def test_creates_filled_copies_by_default(
+        self, fixture_vault: Path, sample_llm_output, tmp_path: Path
+    ):
+        result = self._invoke_match_and_draft(fixture_vault, sample_llm_output, tmp_path)
+        assert result.exit_code == 0, result.stdout
+        assert list((tmp_path / "output" / "drafts").rglob("resume-filled.md"))
+        assert list((tmp_path / "output" / "drafts").rglob("cover_letter-filled.md"))
+        assert "Filled copy created" in result.stdout
+
+    def test_no_init_filled_flag_skips_filled_copies(
+        self, fixture_vault: Path, sample_llm_output, tmp_path: Path
+    ):
+        result = self._invoke_match_and_draft(
+            fixture_vault, sample_llm_output, tmp_path, extra_args=["--no-init-filled"]
+        )
+        assert result.exit_code == 0, result.stdout
+        assert not list((tmp_path / "output" / "drafts").rglob("resume-filled.md"))
+        assert not list((tmp_path / "output" / "drafts").rglob("cover_letter-filled.md"))
+
+    def test_rerun_does_not_clobber_existing_filled_copy(
+        self, fixture_vault: Path, sample_llm_output, tmp_path: Path
+    ):
+        self._invoke_match_and_draft(fixture_vault, sample_llm_output, tmp_path)
+        filled_path = next((tmp_path / "output" / "drafts").rglob("resume-filled.md"))
+        filled_path.write_text("# Hand-edited content, do not lose", encoding="utf-8")
+
+        result = self._invoke_match_and_draft(fixture_vault, sample_llm_output, tmp_path)
+
+        assert result.exit_code == 0, result.stdout
+        assert filled_path.read_text() == "# Hand-edited content, do not lose"
+        assert "already exists, left untouched" in result.stdout
+
 
 class TestTrackCommands:
     def test_add_then_list(self, tmp_path: Path):

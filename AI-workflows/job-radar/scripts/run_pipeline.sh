@@ -2,6 +2,10 @@
 # Chains job-radar and job-hunt-agent from the command line, no Claude Code
 # involved: pull postings, list the ones matching your filters, then (after
 # confirmation) run job-hunt-agent's match-and-draft against each one.
+# match-and-draft also creates resume-filled.md/cover_letter-filled.md
+# automatically for each posting (job-hunt-agent's init-filled, on by
+# default) -- those are the editable copies to do your actual human-review
+# pass into; re-running this script later never clobbers that work.
 #
 # This script is pure shell orchestration over each project's own CLI --
 # job-radar and job-hunt-agent still never import each other. See each
