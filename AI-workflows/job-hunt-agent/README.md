@@ -180,7 +180,7 @@ logic.
 pytest tests/
 ```
 
-101 tests, all against a synthetic fixture vault built fresh under `tmp_path`
+109 tests, all against a synthetic fixture vault built fresh under `tmp_path`
 in `tests/conftest.py` — no test ever touches the real `vault-Resume`.
 `asyncio_mode = auto` (pytest.ini), same as `strategic-reports`.
 
@@ -202,7 +202,7 @@ job-hunt-agent/
 │       ├── guardrails.py       <- forbidden-term / excluded-skill scanning
 │       └── tracker.py          <- ApplicationStore, flat-JSON backed
 │   └── templates/               <- Jinja2 templates for the two draft documents
-├── tests/                       <- 101 tests, fixture-vault-only, no real-vault or real-LLM calls
+├── tests/                       <- 109 tests, fixture-vault-only, no real-vault or real-LLM calls
 └── output/                      <- gitignored; matches/, drafts/, tracker/ generated at runtime
 ```
 
@@ -214,3 +214,41 @@ job-hunt-agent/
 
 None of this is committed (`output/` is gitignored) — it's real, potentially
 company-specific application data, not portfolio content.
+
+## FAQ
+
+### What does "Surfaced skills not yet in this resume" mean, and how should I work with it?
+
+It's real, evidenced content from your vault's `Skills/` files that's never
+made it into any resume before — every skill file tracks a "used" list and
+an "available, not yet used" list, and the matching step's whole job is to
+check that unused list against the specific posting and pull out anything
+genuinely relevant. It's kept in its own labeled section, separate from the
+main Skills list, specifically so nothing surfaced ever looks pre-vetted
+before you've actually looked at it (see "Surfacing unused content is the
+point, not a side effect" above).
+
+Working through it, item by item:
+
+1. **Read the `why_relevant` note critically, not as given.** Sometimes
+   it's a sharp, correct read on why a skill fits this posting; sometimes
+   it's stretching a real skill to a tenuous connection. Keep it only if the
+   connection actually holds up.
+2. **Ask if you could defend it in an interview.** The vault's whole design
+   principle is that provenance is mandatory — everything traces to
+   something real you actually did. If a surfaced skill would make you
+   hesitate under "tell me about a time you used that," it isn't ready yet.
+3. **Check for soft duplicates the tooling won't catch.** The dedup logic
+   catches exact-phrase duplicates already rendered elsewhere in the draft
+   (see the `word_boundary_pattern` check in `assembler.py`), but not
+   near-duplicates worded differently — e.g. "Large Language Models"
+   surfacing as new when the summary already says "LLM." Worth a quick
+   manual scan.
+4. **If you keep one, move it — don't leave it in the surfaced section.**
+   Fold it into the main Skills list wherever it fits, then delete it from
+   "Surfaced skills." That section is a staging area, not somewhere content
+   should live in a resume you actually send.
+5. **Ignore the `(keyword) (file_title)` double-labeling if it looks
+   redundant.** Known cosmetic quirk — the model sometimes fills
+   `file_title` with the keyword itself instead of the real vault filename.
+   Not a correctness problem, safe to drop when editing it in.
