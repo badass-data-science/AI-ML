@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -309,6 +310,78 @@ class TestDiffFilledCmd:
         text = (tmp_path / "resume_filled_diff.md").read_text()
         assert "v2 edited differently" in text
         assert "v1 edited" not in text  # stale content from the first diff run isn't just appended
+
+
+class TestToDocxCmd:
+    def _fake_pandoc_run(self, *args, **kwargs):
+        # args[0] is the argv list: ["pandoc", "<source>", "-o", "<target>"]
+        argv = args[0]
+        source, target = Path(argv[1]), Path(argv[3])
+        target.write_text(f"docx stand-in for {source.name}", encoding="utf-8")
+        return MagicMock(returncode=0)
+
+    def test_converts_markdown_file_to_docx(self, tmp_path: Path):
+        source = tmp_path / "resume-human-edited.md"
+        source.write_text("# Resume\n\nSome content.", encoding="utf-8")
+
+        with patch("job_hunt_agent.cli.shutil.which", return_value="/usr/bin/pandoc"), \
+             patch("job_hunt_agent.cli.subprocess.run", side_effect=self._fake_pandoc_run) as mock_run:
+            result = runner.invoke(app, ["to-docx", "--file", str(source)])
+
+        assert result.exit_code == 0, result.stdout
+        target = tmp_path / "resume-human-edited.docx"
+        assert target.exists()
+        assert "Written" in result.stdout
+        mock_run.assert_called_once()
+        assert mock_run.call_args[0][0][0] == "pandoc"
+
+    def test_converts_multiple_files(self, tmp_path: Path):
+        resume = tmp_path / "resume-human-edited.md"
+        letter = tmp_path / "cover_letter-human-edited.md"
+        resume.write_text("resume content", encoding="utf-8")
+        letter.write_text("cover letter content", encoding="utf-8")
+
+        with patch("job_hunt_agent.cli.shutil.which", return_value="/usr/bin/pandoc"), \
+             patch("job_hunt_agent.cli.subprocess.run", side_effect=self._fake_pandoc_run) as mock_run:
+            result = runner.invoke(
+                app, ["to-docx", "--file", str(resume), "--file", str(letter)]
+            )
+
+        assert result.exit_code == 0, result.stdout
+        assert (tmp_path / "resume-human-edited.docx").exists()
+        assert (tmp_path / "cover_letter-human-edited.docx").exists()
+        assert mock_run.call_count == 2
+
+    def test_missing_source_file_errors_cleanly(self, tmp_path: Path):
+        result = runner.invoke(
+            app, ["to-docx", "--file", str(tmp_path / "does-not-exist.md")]
+        )
+        assert result.exit_code == 1
+        assert "file not found" in result.stderr
+
+    def test_pandoc_not_installed_errors_cleanly(self, tmp_path: Path):
+        source = tmp_path / "resume-human-edited.md"
+        source.write_text("# Resume", encoding="utf-8")
+
+        with patch("job_hunt_agent.cli.shutil.which", return_value=None):
+            result = runner.invoke(app, ["to-docx", "--file", str(source)])
+
+        assert result.exit_code == 1
+        assert "pandoc not found" in result.stderr
+
+    def test_pandoc_failure_errors_cleanly(self, tmp_path: Path):
+        source = tmp_path / "resume-human-edited.md"
+        source.write_text("# Resume", encoding="utf-8")
+
+        def _raise(*args, **kwargs):
+            raise subprocess.CalledProcessError(1, args[0], stderr=b"pandoc: bad input")
+
+        with patch("job_hunt_agent.cli.shutil.which", return_value="/usr/bin/pandoc"), \
+             patch("job_hunt_agent.cli.subprocess.run", side_effect=_raise):
+            result = runner.invoke(app, ["to-docx", "--file", str(source)])
+
+        assert result.exit_code == 1
+        assert "pandoc failed" in result.stderr
 
 
 class TestMatchAndDraftCmd:

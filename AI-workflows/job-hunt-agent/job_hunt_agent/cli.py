@@ -13,6 +13,10 @@ Usage:
     python -m job_hunt_agent.cli track add --company Acme --role "Data Scientist" --variant data-science --register formal-professional
     python -m job_hunt_agent.cli track list
 
+    # last step before sending: convert whatever you actually finished editing to Word
+    python -m job_hunt_agent.cli to-docx --file output/drafts/acme-data-scientist-2026-01-01/resume-human-edited.md \
+        --file output/drafts/acme-data-scientist-2026-01-01/cover_letter-human-edited.md
+
 vault-Resume is treated as strictly read-only input everywhere in this CLI —
 nothing here ever writes into it, including on a "sent" application. See
 Resumes/INDEX.md's `used_for_applications` field in the vault itself if you
@@ -24,6 +28,8 @@ from __future__ import annotations
 import asyncio
 import difflib
 import os
+import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -371,6 +377,53 @@ def diff_filled_cmd(
     for s in skipped:
         stem = Path(s).stem
         typer.echo(f"Skipped {s}: needs both {s} and {stem}-filled.md to exist first", err=True)
+
+
+def _convert_to_docx(source: Path) -> Path:
+    """Shell out to pandoc to convert a markdown file to .docx, same stem,
+    same directory. Raises typer.Exit on a missing source file, a missing
+    pandoc binary, or a pandoc failure — there's no partial/best-effort
+    result worth returning here."""
+    if not source.is_file():
+        typer.echo(f"file not found: {source}", err=True)
+        raise typer.Exit(code=1)
+    if shutil.which("pandoc") is None:
+        typer.echo(
+            "pandoc not found on PATH — install it (e.g. `apt install pandoc` or "
+            "`brew install pandoc`) to use to-docx.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    target = source.with_suffix(".docx")
+    try:
+        subprocess.run(["pandoc", str(source), "-o", str(target)], check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        typer.echo(f"pandoc failed on {source}: {e.stderr.decode(errors='replace')}", err=True)
+        raise typer.Exit(code=1) from e
+    return target
+
+
+@app.command("to-docx")
+def to_docx_cmd(
+    file: list[Path] = typer.Option(
+        ...,
+        "--file",
+        help="A markdown draft to convert to .docx (repeatable). Output is written next to it, "
+        "same stem, .docx extension — e.g. resume-human-edited.md -> resume-human-edited.docx. "
+        "Works on whatever you actually intend to send: a *-filled.md, a *-human-edited.md, "
+        "or the pristine resume.md/cover_letter.md.",
+    ),
+) -> None:
+    """Convert one or more finished markdown drafts to Word (.docx) via pandoc.
+
+    This is the last step before sending: everything upstream of it stays
+    markdown, since markdown is what's easy to diff, template, and hand-edit.
+    Uses pandoc's default docx styling — reformat by hand in Word afterward
+    if you need something specific to a company's template.
+    """
+    for f in file:
+        target = _convert_to_docx(f)
+        typer.echo(f"Written: {target}")
 
 
 @app.command("match-and-draft")

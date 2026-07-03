@@ -162,6 +162,21 @@ edited yet, but it stays useful: re-running `match-and-draft` later (say,
 after a code fix, which happened more than once building this project)
 refreshes the diff to reflect whatever you've actually changed by then.
 
+### Markdown until the very last step
+
+Every draft artifact in this pipeline — `resume.md`, `*-filled.md`, diffs,
+`posting.txt` — stays plain markdown, since that's what's easy to diff,
+template, and hand-edit. `to-docx` is the one command that leaves that
+world: a thin wrapper over the system `pandoc` binary (not a Python
+dependency — nothing else here needs a document-conversion library), run
+by hand once editing is actually finished, against whatever file the human
+review pass produced (a `-filled.md`, a differently-named hand-edited copy,
+or the pristine draft). It doesn't guess which file is "done" — you name it
+explicitly with `--file`, repeatable for both documents in one call. Uses
+pandoc's default `.docx` styling; reformatting to match a specific
+company's template is a by-hand step in Word after that, not something this
+tool tries to solve.
+
 ### No job-board scraping in v1
 
 Input is a job posting's text — pasted, or a local file. This is
@@ -193,6 +208,9 @@ backfill the real, unstructured application history at
 cd job-hunt-agent
 pip install -r requirements.txt   # or: uv pip install -r requirements.txt
 
+# to-docx also needs pandoc on PATH (not a pip package):
+#   apt install pandoc   /   brew install pandoc
+
 # sanity-check the vault parser
 python -m job_hunt_agent.cli load-vault
 
@@ -222,6 +240,11 @@ python -m job_hunt_agent.cli init-filled --draft-dir output/drafts/acme-data-sci
 
 # see exactly what your human-review pass changed
 python -m job_hunt_agent.cli diff-filled --draft-dir output/drafts/acme-data-scientist-<date>
+
+# last step before sending: convert whatever you actually finished editing to Word (requires pandoc on PATH)
+python -m job_hunt_agent.cli to-docx \
+    --file output/drafts/acme-data-scientist-<date>/resume-filled.md \
+    --file output/drafts/acme-data-scientist-<date>/cover_letter-filled.md
 
 # track what you actually send
 python -m job_hunt_agent.cli track add --company Acme --role "Data Scientist" \
@@ -266,7 +289,7 @@ logic.
 pytest tests/
 ```
 
-145 tests, all against a synthetic fixture vault built fresh under `tmp_path`
+150 tests, all against a synthetic fixture vault built fresh under `tmp_path`
 in `tests/conftest.py` — no test ever touches the real `vault-Resume`.
 `asyncio_mode = auto` (pytest.ini), same as `strategic-reports`.
 
@@ -275,7 +298,7 @@ in `tests/conftest.py` — no test ever touches the real `vault-Resume`.
 ```
 job-hunt-agent/
 ├── job_hunt_agent/
-│   ├── cli.py                  <- Typer CLI: load-vault, company-brief, match, draft, init-filled, diff-filled, match-and-draft, track *
+│   ├── cli.py                  <- Typer CLI: load-vault, company-brief, match, draft, init-filled, diff-filled, to-docx, match-and-draft, track *
 │   └── core/
 │       ├── llm_client.py       <- litellm + instructor client (ported from strategic-reports)
 │       ├── tracing.py          <- Langfuse/Phoenix setup (ported from strategic-reports)
@@ -289,7 +312,7 @@ job-hunt-agent/
 │       ├── posting_utils.py    <- best-effort "About <Company>" extraction from raw posting text
 │       └── tracker.py          <- ApplicationStore, flat-JSON backed
 │   └── templates/               <- Jinja2 templates for the two draft documents
-├── tests/                       <- 145 tests, fixture-vault-only, no real-vault or real-LLM calls
+├── tests/                       <- 150 tests, fixture-vault-only, no real-vault or real-LLM calls
 └── output/                      <- gitignored; matches/, drafts/, tracker/ generated at runtime
 ```
 
@@ -300,6 +323,7 @@ job-hunt-agent/
 - `output/drafts/{slug}/posting.txt` — a copy of the exact posting text the drafts were built from, written automatically by both `draft` and `match-and-draft`. No flag to skip it — it's a plain copy, not a generated artifact, so there's no meaningful "no" to opt into. Keeps the posting one file away during the human-review pass instead of a re-lookup of wherever the original `--posting` path (or the match.json it came from) happened to point.
 - `output/drafts/{slug}/resume-filled.md`, `cover_letter-filled.md` — editable copies of the above, created automatically by `match-and-draft` (or explicitly via `init-filled`). This is where the actual human-review pass happens (surfaced-content integration, the company-specific paragraph, closing-line specifics), so re-running `draft`/`match-and-draft` never clobbers that work.
 - `output/drafts/{slug}/resume_filled_diff.md`, `cover_letter_filled_diff.md` — a unified diff between each pristine draft and its `-filled.md` sibling, from `diff-filled`. Shows exactly what a given human-review pass actually changed; always safe to regenerate, since a diff is disposable.
+- `output/drafts/{slug}/*.docx` — a Word version of whichever markdown file you point `to-docx` at, same stem, written next to it. Not created automatically by anything — a deliberate last step run by hand once editing is actually done.
 - `output/tracker/applications.json` — the local application tracker.
 
 None of this is committed (`output/` is gitignored) — it's real, potentially
