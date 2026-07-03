@@ -159,6 +159,51 @@ class TestDraftCmd:
         assert "ai-engineering" in result.stdout
 
 
+class TestInitFilledCmd:
+    def test_creates_filled_copies_of_both_drafts(self, tmp_path: Path):
+        (tmp_path / "resume.md").write_text("# Resume draft", encoding="utf-8")
+        (tmp_path / "cover_letter.md").write_text("Dear Hiring Manager,", encoding="utf-8")
+
+        result = runner.invoke(app, ["init-filled", "--draft-dir", str(tmp_path)])
+
+        assert result.exit_code == 0, result.stdout
+        assert (tmp_path / "resume-filled.md").read_text() == "# Resume draft"
+        assert (tmp_path / "cover_letter-filled.md").read_text() == "Dear Hiring Manager,"
+        assert "Created" in result.stdout
+
+    def test_only_creates_filled_copy_for_files_that_exist(self, tmp_path: Path):
+        (tmp_path / "resume.md").write_text("# Resume draft", encoding="utf-8")
+
+        result = runner.invoke(app, ["init-filled", "--draft-dir", str(tmp_path)])
+
+        assert result.exit_code == 0, result.stdout
+        assert (tmp_path / "resume-filled.md").exists()
+        assert not (tmp_path / "cover_letter-filled.md").exists()
+
+    def test_does_not_overwrite_existing_filled_file_without_force(self, tmp_path: Path):
+        (tmp_path / "resume.md").write_text("# Regenerated draft", encoding="utf-8")
+        (tmp_path / "resume-filled.md").write_text("# Hand-edited content, do not lose", encoding="utf-8")
+
+        result = runner.invoke(app, ["init-filled", "--draft-dir", str(tmp_path)])
+
+        assert result.exit_code == 0, result.stdout
+        assert (tmp_path / "resume-filled.md").read_text() == "# Hand-edited content, do not lose"
+        assert "left untouched" in result.stdout
+
+    def test_force_overwrites_existing_filled_file(self, tmp_path: Path):
+        (tmp_path / "resume.md").write_text("# Regenerated draft", encoding="utf-8")
+        (tmp_path / "resume-filled.md").write_text("# Stale hand-edited content", encoding="utf-8")
+
+        result = runner.invoke(app, ["init-filled", "--draft-dir", str(tmp_path), "--force"])
+
+        assert result.exit_code == 0, result.stdout
+        assert (tmp_path / "resume-filled.md").read_text() == "# Regenerated draft"
+
+    def test_no_draft_files_present_errors(self, tmp_path: Path):
+        result = runner.invoke(app, ["init-filled", "--draft-dir", str(tmp_path)])
+        assert result.exit_code == 1
+
+
 class TestMatchAndDraftCmd:
     def test_chains_match_and_draft(
         self, fixture_vault: Path, sample_llm_output, tmp_path: Path

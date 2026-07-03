@@ -5,6 +5,7 @@ Usage:
     python -m job_hunt_agent.cli match --posting posting.txt --company Acme --role "Data Scientist"
     python -m job_hunt_agent.cli match --posting posting.txt --company Acme --role "Data Scientist" --url "https://..."
     python -m job_hunt_agent.cli draft --match output/matches/acme-data-scientist-2026-01-01/match.json
+    python -m job_hunt_agent.cli init-filled --draft-dir output/drafts/acme-data-scientist-2026-01-01
     python -m job_hunt_agent.cli match-and-draft --posting posting.txt --company Acme --role "Data Scientist"
     python -m job_hunt_agent.cli track add --company Acme --role "Data Scientist" --variant data-science --register formal-professional
     python -m job_hunt_agent.cli track list
@@ -187,6 +188,51 @@ def draft_cmd(
         typer.echo("  WARNINGS:")
         for w in letter.warnings:
             typer.echo(f"    - {w}")
+
+
+@app.command("init-filled")
+def init_filled_cmd(
+    draft_dir: Path = typer.Option(
+        ..., "--draft-dir", help="A draft directory containing resume.md and/or cover_letter.md"
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Overwrite an existing *-filled.md file instead of leaving it untouched."
+    ),
+) -> None:
+    """Create resume-filled.md / cover_letter-filled.md as editable copies of the assembled drafts.
+
+    resume.md and cover_letter.md stay the pristine, reproducible output of
+    `draft` — always safe to re-run when the match or the code changes,
+    since nothing gets hand-edited into them directly. The *-filled.md
+    siblings are where the actual human-review pass happens: integrating
+    worthwhile surfaced skills/bullets into the main sections, writing the
+    company-specific paragraph, filling in closing-line specifics — content
+    that, per the vault's own rules, must always be written fresh rather
+    than templated. Re-running `draft` never clobbers that work, and you can
+    diff draft vs. filled to see exactly what changed for a given
+    application, which is the point when doing this across many postings.
+    """
+    created: list[Path] = []
+    skipped: list[Path] = []
+    for base_name in ("resume.md", "cover_letter.md"):
+        source = draft_dir / base_name
+        if not source.is_file():
+            continue
+        target = draft_dir / f"{source.stem}-filled{source.suffix}"
+        if target.exists() and not force:
+            skipped.append(target)
+            continue
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        created.append(target)
+
+    if not created and not skipped:
+        typer.echo(f"No resume.md or cover_letter.md found under {draft_dir}", err=True)
+        raise typer.Exit(code=1)
+
+    for t in created:
+        typer.echo(f"Created: {t}")
+    for t in skipped:
+        typer.echo(f"Already exists, left untouched (use --force to overwrite): {t}")
 
 
 @app.command("match-and-draft")
