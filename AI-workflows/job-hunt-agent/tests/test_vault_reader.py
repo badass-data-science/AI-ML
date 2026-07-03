@@ -72,11 +72,20 @@ class TestLoadExperience:
         assert bullet.used_in == []
         assert any("acme-missing-used-in" in w for w in snap.warnings)
         # the malformed block must not prevent the other bullets from loading
-        assert len(exp.bullets) == 4
+        assert len(exp.bullets) == 5
 
     def test_all_experience_bullets_helper(self, fixture_vault: Path):
         snap = load_vault(fixture_vault)
-        assert len(snap.all_experience_bullets()) == 4
+        assert len(snap.all_experience_bullets()) == 5
+
+    def test_superseded_by_parsed_from_used_in_line(self, fixture_vault: Path):
+        snap = load_vault(fixture_vault)
+        exp = snap.experience["acme-corp"]
+        original = next(b for b in exp.bullets if b.bullet_id == "acme-ml-pipeline-original")
+        assert original.superseded_by == "acme-ml-pipeline"
+        # unaffected bullets stay None, not accidentally matched
+        modern = next(b for b in exp.bullets if b.bullet_id == "acme-ml-pipeline")
+        assert modern.superseded_by is None
 
 
 class TestLoadSkills:

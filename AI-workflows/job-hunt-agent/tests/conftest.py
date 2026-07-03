@@ -179,6 +179,10 @@ Built genomics data pipelines for variant calling using Python and R
 
 ### acme-missing-used-in
 Bullet intentionally missing a Used in line, to test the warning path
+
+### acme-ml-pipeline-original
+**Used in:** none (retired — superseded by `acme-ml-pipeline`)
+Built machine learning pipelines using Python and scikit-learn for internal reporting
 """,
     )
 

@@ -40,6 +40,7 @@ _BULLET_HEADING_RE = re.compile(r"^### (.+)$", re.MULTILINE)
 _H2_HEADING_RE = re.compile(r"^## (.+)$", re.MULTILINE)
 _BOLD_LABEL_RE = re.compile(r"^\*\*([A-Za-z ]+?):\*\*\s*(.*)$")
 _BULLET_COMMENT_RE = re.compile(r"<!--\s*bullets:\s*(.*?)\s*-->")
+_SUPERSEDED_BY_RE = re.compile(r"superseded by `([\w-]+)`")
 _WIKILINK_HEADING_RE = re.compile(r"\[\[([^\]#|]+)#([^\]|]+)(?:\|[^\]]+)?\]\]")
 
 
@@ -211,6 +212,7 @@ def _parse_experience_file(path: Path, warnings: list[str]) -> EmployerExperienc
         relevance_note: str | None = None
         other_notes: list[str] = []
         text_lines: list[str] = []
+        superseded_by: str | None = None
 
         for line in block.splitlines():
             line = line.strip()
@@ -221,6 +223,16 @@ def _parse_experience_file(path: Path, warnings: list[str]) -> EmployerExperienc
                 label, value = label_match.group(1).strip(), label_match.group(2).strip()
                 if label.lower() == "used in":
                     used_in = [v.strip() for v in value.split(",") if v.strip()]
+                    # A retired/merged bullet's "Used in" line reads like
+                    # "none (retired — superseded by `bbh-topic-modeling`)" —
+                    # doesn't change used_in's existing value (still whatever
+                    # raw string it parses to today, unchanged behavior for
+                    # any other reader of it), just additionally captures the
+                    # replacement bullet_id so assembler.py's dedup check can
+                    # ground-truth against it later.
+                    superseded_match = _SUPERSEDED_BY_RE.search(value)
+                    if superseded_match:
+                        superseded_by = superseded_match.group(1)
                 elif label.lower() == "relevance":
                     relevance_note = value
                 else:
@@ -241,6 +253,7 @@ def _parse_experience_file(path: Path, warnings: list[str]) -> EmployerExperienc
                 relevance_note=relevance_note,
                 other_notes=other_notes,
                 text=" ".join(text_lines).strip(),
+                superseded_by=superseded_by,
             )
         )
 

@@ -94,6 +94,30 @@ class TestAssembleDraftResume:
         # the bullet's real text still appears exactly once, in Experience
         assert text.count("Built and deployed machine learning pipelines") == 1
 
+    def test_surfaced_bullet_superseded_by_used_bullet_is_dropped(
+        self, loaded_vault, sample_job_posting, sample_llm_output, tmp_path
+    ):
+        # Regression test for a real bug found by manual review: a retired,
+        # pre-trim bullet's own used_in is empty, so the check above alone
+        # doesn't catch it — but its content already exists in the resume
+        # under the newer bullet_id it was superseded by. acme-ml-pipeline
+        # (data-science, the recommended variant here) supersedes
+        # acme-ml-pipeline-original, which must not get surfaced as if new.
+        from job_hunt_agent.core.models import SurfacedBullet
+
+        sample_llm_output.surfaced_bullets = [
+            SurfacedBullet(
+                bullet_id="acme-ml-pipeline-original",
+                employer="Acme Corp",
+                why_relevant="duplicate claim via retired original",
+            )
+        ]
+        match = JobMatchResult(job=sample_job_posting, llm_output=sample_llm_output)
+        draft = assemble_draft_resume(match, loaded_vault, tmp_path)
+        text = draft.output_path.read_text()
+        assert "NEW: surfaced by matcher" not in text
+        assert "internal reporting" not in text  # the retired bullet's distinguishing text
+
     def test_surfaced_skill_already_in_variant_is_dropped(
         self, loaded_vault, sample_job_posting, sample_llm_output, tmp_path
     ):

@@ -34,6 +34,11 @@ class ExperienceBullet(BaseModel):
     relevance_note: str | None = None
     other_notes: list[str] = Field(default_factory=list)
     text: str
+    superseded_by: str | None = Field(
+        default=None,
+        description="bullet_id of the newer bullet this one was retired/merged into, "
+        "parsed from a '**Used in:** none (retired — superseded by `X`)' line, if present.",
+    )
 
 
 class EmployerExperience(BaseModel):

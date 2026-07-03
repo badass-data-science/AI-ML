@@ -180,7 +180,7 @@ logic.
 pytest tests/
 ```
 
-109 tests, all against a synthetic fixture vault built fresh under `tmp_path`
+111 tests, all against a synthetic fixture vault built fresh under `tmp_path`
 in `tests/conftest.py` — no test ever touches the real `vault-Resume`.
 `asyncio_mode = auto` (pytest.ini), same as `strategic-reports`.
 
@@ -202,7 +202,7 @@ job-hunt-agent/
 │       ├── guardrails.py       <- forbidden-term / excluded-skill scanning
 │       └── tracker.py          <- ApplicationStore, flat-JSON backed
 │   └── templates/               <- Jinja2 templates for the two draft documents
-├── tests/                       <- 109 tests, fixture-vault-only, no real-vault or real-LLM calls
+├── tests/                       <- 111 tests, fixture-vault-only, no real-vault or real-LLM calls
 └── output/                      <- gitignored; matches/, drafts/, tracker/ generated at runtime
 ```
 
@@ -252,3 +252,29 @@ Working through it, item by item:
    redundant.** Known cosmetic quirk — the model sometimes fills
    `file_title` with the keyword itself instead of the real vault filename.
    Not a correctness problem, safe to drop when editing it in.
+
+### What does "Surfaced bullets not yet in any resume variant" mean, and how should I work with it?
+
+Same idea as surfaced skills, one level down — real experience bullets from
+your vault's `Resumes/experience/` files, individually ID'd and tagged with
+which resume variant(s) currently use them. The matcher surfaces bullets
+relevant to the posting that aren't tagged as used in the *recommended*
+variant specifically (the heading says "any," but the check is really "this
+one" — a bullet already used in a different variant could still show up
+here).
+
+The dedup check also knows about retired bullets: some employer files keep
+pre-trim "original" versions of a bullet around for reference, explicitly
+marked `**Used in:** none (retired — superseded by \`newer-bullet-id\`)`.
+Those get cross-checked against the bullet they were superseded by — if
+that replacement is already in the recommended variant, the retired
+original is dropped too, not surfaced as if it were new (see
+`superseded_by` in `vault_models.py` and the check in `assembler.py`).
+
+What that check *doesn't* catch: two bullets that happen to describe
+similar work without an explicit "superseded by" relationship recorded in
+the vault. If a surfaced bullet reads like something you're pretty sure is
+already in the Experience section above it, trust that instinct and check
+by hand — the same "ground truth from the vault, not from the LLM's claim"
+principle applies, but it only works where the vault actually records the
+relationship.

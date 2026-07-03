@@ -85,6 +85,15 @@ def assemble_draft_resume(
                 # this, but compliance isn't guaranteed, so this is enforced
                 # deterministically here instead of trusted from the LLM output.
                 continue
+            if full.superseded_by is not None:
+                # Same ground-truth idea, one hop further: a retired/merged
+                # bullet's own used_in is empty (it's not used anywhere under
+                # its own ID), but its content already exists in the resume
+                # under the newer bullet_id it was superseded by — surfacing
+                # it as "not yet in any resume variant" would be misleading.
+                superseding = bullet_lookup.get(full.superseded_by)
+                if superseding is not None and variant_slug in superseding.used_in:
+                    continue
             surfaced_bullets.append({"bullet": full, "why_relevant": sb.why_relevant})
 
         already_used_keywords = {
