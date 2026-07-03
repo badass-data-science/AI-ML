@@ -121,6 +121,9 @@ python -m job_radar.cli pull
 python -m job_radar.cli list
 python -m job_radar.cli list --max-ghost-score 0.3   # hide riskier postings
 python -m job_radar.cli list --company Acme
+python -m job_radar.cli list --title-contains "Data Scientist"
+python -m job_radar.cli list --location-contains Remote
+python -m job_radar.cli list --title-contains "ML Engineer" --location-contains Austin
 
 python -m job_radar.cli show output/postings/<date>/<slug>.json
 
@@ -138,12 +141,47 @@ python -m job_hunt_agent.cli match \
 | `JOB_RADAR_COMPANIES_PATH` | Path to `companies.json` | `$JOB_RADAR_HOME/config/companies.json` |
 | `JOB_RADAR_SEEN_STORE_PATH` | Path to the seen-posting store | `$JOB_RADAR_HOME/output/seen_store.json` |
 
-## Finding a company's ATS slug
+## Finding companies to add — including localized to you or remote
 
-Check their careers page URL:
-- Greenhouse: `job-boards.greenhouse.io/<slug>` or `boards.greenhouse.io/<slug>`
-- Lever: `jobs.lever.co/<slug>`
-- Ashby: `jobs.ashbyhq.com/<slug>`
+There is deliberately no company-discovery/search feature here (see "ATS
+APIs, not scraping or aggregators" above) — none of Greenhouse/Lever/Ashby
+expose a public "search postings across all companies by location" endpoint,
+only per-company job lists, so there's no API-level way to ask "which
+companies near me use Greenhouse." Finding candidate companies stays a manual
+step, same as picking which RSS feeds go in `strategic-reports`:
+
+1. Use a location- or remote-filtered search on a general job aggregator
+   (LinkedIn Jobs, Indeed, Google for Jobs, etc.) to find companies actively
+   hiring in your area or fully remote — you're using the aggregator for
+   company *discovery* only, not as job-radar's data source.
+2. For each company you're interested in, check whether their careers page
+   is hosted on one of the three supported ATS platforms and grab the slug
+   from the URL:
+   - Greenhouse: `job-boards.greenhouse.io/<slug>` or `boards.greenhouse.io/<slug>`
+   - Lever: `jobs.lever.co/<slug>`
+   - Ashby: `jobs.ashbyhq.com/<slug>`
+3. Add `{"name": ..., "ats": ..., "slug": ...}` to `config/companies.json`.
+
+## Narrowing to a location or profession
+
+`pull` always fetches and writes out every posting a configured company has
+listed — narrowing happens at `list` time, not by asking the ATS for a
+subset, since query-param support for location/department filters is
+inconsistent across the three platforms and it's more reliable to always
+pull everything once and filter client-side as many times as you want:
+
+```bash
+python -m job_radar.cli list --title-contains "Data Scientist"
+python -m job_radar.cli list --location-contains Remote
+python -m job_radar.cli list --location-contains Austin
+```
+
+Both are case-insensitive substring matches, combinable with each other and
+with `--company`/`--max-ghost-score`. `--location-contains` matches whatever
+string the ATS itself reports for that posting — wording varies by company
+(`"Remote"`, `"Remote - US"`, `"Remote (US)"`, or just a bare city name with
+no remote tag at all), so it's worth trying a few terms rather than assuming
+one canonical spelling.
 
 ## Running the tests
 
@@ -151,7 +189,7 @@ Check their careers page URL:
 pytest tests/
 ```
 
-39 tests, no network access — every ATS response is mocked at the same
+42 tests, no network access — every ATS response is mocked at the same
 call-site granularity `strategic-reports/tests/test_ingestion.py` documents
 for `feedparser.parse` (patch where the name is looked up, not where it's
 defined).
@@ -170,7 +208,7 @@ job-radar/
 │       └── source.py           <- load_companies() + pull_postings() orchestration
 ├── config/
 │   └── companies.json          <- your target companies (placeholders shipped)
-├── tests/                      <- 39 tests, all HTTP mocked, no real network
+├── tests/                      <- 42 tests, all HTTP mocked, no real network
 └── output/                     <- gitignored; postings/, seen_store.json generated at runtime
 ```
 

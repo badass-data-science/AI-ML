@@ -94,6 +94,50 @@ class TestListCmd:
         assert result.exit_code == 0
         assert "run `pull` first" in result.stdout
 
+    def test_title_contains_narrows_by_role(self, tmp_path: Path):
+        companies_path = _write_companies_config(tmp_path)
+        scientist = make_posting(external_id="1", title="Senior Data Scientist")
+        engineer = make_posting(external_id="2", title="Software Engineer")
+
+        with patch(
+            "job_radar.core.source.FETCHERS", {"greenhouse": AsyncMock(return_value=[scientist, engineer])}
+        ):
+            runner.invoke(
+                app,
+                [
+                    "pull",
+                    "--companies-path", str(companies_path),
+                    "--seen-store-path", str(tmp_path / "seen_store.json"),
+                    "--home", str(tmp_path),
+                ],
+            )
+
+        result = runner.invoke(app, ["list", "--home", str(tmp_path), "--title-contains", "data scientist"])
+        assert "Senior Data Scientist" in result.stdout
+        assert "Software Engineer" not in result.stdout
+
+    def test_location_contains_narrows_by_location(self, tmp_path: Path):
+        companies_path = _write_companies_config(tmp_path)
+        remote = make_posting(external_id="1", title="Remote Role", location="Remote - US")
+        onsite = make_posting(external_id="2", title="Onsite Role", location="San Francisco, CA")
+
+        with patch(
+            "job_radar.core.source.FETCHERS", {"greenhouse": AsyncMock(return_value=[remote, onsite])}
+        ):
+            runner.invoke(
+                app,
+                [
+                    "pull",
+                    "--companies-path", str(companies_path),
+                    "--seen-store-path", str(tmp_path / "seen_store.json"),
+                    "--home", str(tmp_path),
+                ],
+            )
+
+        result = runner.invoke(app, ["list", "--home", str(tmp_path), "--location-contains", "remote"])
+        assert "Remote Role" in result.stdout
+        assert "Onsite Role" not in result.stdout
+
 
 class TestShowCmd:
     def test_shows_full_detail(self, tmp_path: Path):

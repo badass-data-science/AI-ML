@@ -1,20 +1,53 @@
 {
-  "_comment": "Placeholder schema examples only — these slugs are not verified real company board tokens. Replace with your real target companies before running `pull`. Find a company's slug by checking whether their careers page URL contains it (e.g. a Greenhouse-hosted page at job-boards.greenhouse.io/<slug>, a Lever-hosted page at jobs.lever.co/<slug>, or an Ashby-hosted page at jobs.ashbyhq.com/<slug>).",
+  "_comment": "Starter list, curated 2026-07-02 for San Diego / remote + Emily's bioinformatics-ML and applied-AI career lanes. Every slug below was verified live via curl against the real ATS API before being added here (not guessed) — see project_job_radar memory. Add/remove freely; use `python -m job_radar.cli list --location-contains 'San Diego'` or `--location-contains Remote` after a pull to see what each company actually has open right now, since listings change.",
   "companies": [
     {
-      "name": "Example Co (Greenhouse)",
-      "ats": "greenhouse",
-      "slug": "examplecogreenhouse"
-    },
-    {
-      "name": "Example Co (Lever)",
+      "name": "Fate Therapeutics",
       "ats": "lever",
-      "slug": "examplecolever"
+      "slug": "fatetherapeutics",
+      "_note": "San Diego-headquartered cell therapy/genomics biotech — all current listings are in San Diego, CA."
     },
     {
-      "name": "Example Co (Ashby)",
+      "name": "insitro",
       "ats": "ashby",
-      "slug": "examplecoashby"
+      "slug": "insitro",
+      "_note": "AI-driven drug discovery (ML + computational biology) — South San Francisco, worth checking for remote roles."
+    },
+    {
+      "name": "Benchling",
+      "ats": "ashby",
+      "slug": "benchling",
+      "_note": "Biotech R&D software platform — multiple offices (SF, Boston, Zurich, London), worth checking for remote roles."
+    },
+    {
+      "name": "Anthropic",
+      "ats": "greenhouse",
+      "slug": "anthropic",
+      "_note": "Applied AI / agentic engineering lane — has 'Remote-Friendly, United States' roles alongside SF/NYC."
+    },
+    {
+      "name": "Scale AI",
+      "ats": "greenhouse",
+      "slug": "scaleai",
+      "_note": "Applied AI / data lane."
+    },
+    {
+      "name": "10x Genomics",
+      "ats": "greenhouse",
+      "slug": "10xgenomics",
+      "_note": "Genomics instrumentation/software — 7 of 28 current listings are US-remote."
+    },
+    {
+      "name": "Natera",
+      "ats": "greenhouse",
+      "slug": "natera",
+      "_note": "Genomics/diagnostics — 59 of 188 current listings are US-remote, strong bioinformatics-adjacent fit."
+    },
+    {
+      "name": "Freenome",
+      "ats": "greenhouse",
+      "slug": "freenome",
+      "_note": "AI + genomics for early cancer detection — 5 of 17 current listings are remote, including a Senior Software Engineer II role."
     }
   ]
 }

@@ -87,6 +87,16 @@ def list_cmd(
         None, "--max-ghost-score", help="Hard-exclude postings scored above this (default: show everything)."
     ),
     company: str | None = typer.Option(None, "--company"),
+    title_contains: str | None = typer.Option(
+        None, "--title-contains", help="Case-insensitive substring match against the posting title, e.g. 'Data Scientist'."
+    ),
+    location_contains: str | None = typer.Option(
+        None,
+        "--location-contains",
+        help="Case-insensitive substring match against the posting location, e.g. 'Remote' or a city name. "
+        "Matches whatever string the ATS itself reports — wording varies by company (some tag a posting "
+        "'Remote', others 'Remote - US', others just a city with no remote tag at all), so try a few terms.",
+    ),
     home: Path = typer.Option(_DEFAULT_HOME, "--home", envvar="JOB_RADAR_HOME"),
 ) -> None:
     """Re-list previously pulled postings, sorted by ghost score ascending (safest first)."""
@@ -101,6 +111,14 @@ def list_cmd(
     ]
     if company is not None:
         records = [r for r in records if r.posting.company.lower() == company.lower()]
+    if title_contains is not None:
+        records = [r for r in records if title_contains.lower() in r.posting.title.lower()]
+    if location_contains is not None:
+        records = [
+            r
+            for r in records
+            if r.posting.location is not None and location_contains.lower() in r.posting.location.lower()
+        ]
     if max_ghost_score is not None:
         records = [r for r in records if r.ghost.score <= max_ghost_score]
 
@@ -109,9 +127,10 @@ def list_cmd(
         typer.echo("No matching postings.")
         return
 
-    typer.echo(f"{'GHOST':>6}  {'COMPANY':<20} {'TITLE'}")
+    typer.echo(f"{'GHOST':>6}  {'COMPANY':<20} {'LOCATION':<20} {'TITLE'}")
     for r in records:
-        typer.echo(f"{r.ghost.score:>6.2f}  {r.posting.company:<20} {r.posting.title}")
+        location = r.posting.location or "—"
+        typer.echo(f"{r.ghost.score:>6.2f}  {r.posting.company:<20} {location:<20} {r.posting.title}")
 
 
 @app.command("show")
