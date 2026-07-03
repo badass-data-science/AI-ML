@@ -113,12 +113,15 @@ python -m job_radar.cli list --location-contains "San Diego" --title-contains "A
 python -m job_hunt_agent.cli match-and-draft \
     --posting output/postings/2026-07-02/acadia-pharmaceuticals--....txt \
     --company "Acadia Pharmaceuticals" --role "Associate Director, AI/ML Engineering" \
-    --url "https://acadia.com/en-us/careers/job-board/8565787002?gh_jid=8565787002"
+    --url "https://acadia.com/en-us/careers/job-board/8565787002?gh_jid=8565787002" \
+    --ghost-score 0.0 --ghost-reasons ""
 ```
 
 That `--url` flag is a small thing that took a real conversation to notice was missing: a matched, drafted resume is useless without the link back to where it came from, and the original design didn't carry one anywhere. It does now — threaded from the ATS API's own listing URL, through the scored posting, through the match, into a metadata comment on the assembled draft, so the apply link is never more than one file away from the document built for it.
 
-The two projects still don't know about each other in any way that matters. Job Radar never imports the resume-matching agent's code, and the reverse is also true — the only thing that crosses the boundary is a `.txt` file and, now, a `--url` string. That's deliberate: either project's tests stay fully independent, and either one could be swapped out or rebuilt without touching the other. `scripts/run_pipeline.sh` chains them together for real, end-to-end command-line use — pull, filter, confirm (each downstream match is a real LLM call, and confirmation matters when that costs real time and, depending on the provider, real money), then match-and-draft against everything that made the cut — but it's a shell script calling two CLIs, not a shared codebase.
+The ghost-risk score this whole post is about follows the identical path now, not just the URL. `--ghost-score`/`--ghost-reasons` ride along the same way, into the same metadata comment — so the risk judgment made all the way back in Phase 3 of this pipeline is still sitting right there in the document, at the exact moment a human is deciding whether it was worth writing a cover letter for this listing at all. `run_pipeline.sh` extracts both straight from each posting's sidecar JSON and passes them through automatically; nothing has to be looked up twice.
+
+The two projects still don't know about each other in any way that matters. Job Radar never imports the resume-matching agent's code, and the reverse is also true — the only things that cross the boundary are a `.txt` file, a URL string, and a ghost-risk score, and even those three cross it as plain values passed on a command line, not shared code. That's deliberate: either project's tests stay fully independent, and either one could be swapped out or rebuilt without touching the other. `scripts/run_pipeline.sh` chains them together for real, end-to-end command-line use — pull, filter, confirm (each downstream match is a real LLM call, and confirmation matters when that costs real time and, depending on the provider, real money), then match-and-draft against everything that made the cut — but it's a shell script calling two CLIs, not a shared codebase.
 
 There's also `discover-slug` now, which exists because seeding that company list by hand got tedious fast. Give it a company name and it generates a small set of plausible ATS slugs — the full name, hyphenated, and just the first word — and checks every one concurrently against all three real APIs:
 

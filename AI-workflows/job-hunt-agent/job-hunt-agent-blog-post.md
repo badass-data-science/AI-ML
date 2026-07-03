@@ -65,7 +65,7 @@ That design choice caught its own bug early. The first version scanned for forbi
 
 ## What Broke, and What That Taught Her
 
-The suite sits at 122 tests now, entirely against a synthetic fixture vault, never the real one. The most serious bug wasn't caught by any of them — it needed a second real posting, in a different domain from the first, to surface.
+The suite sits at 143 tests now, entirely against a synthetic fixture vault, never the real one. The most serious bug wasn't caught by any of them — it needed a second real posting, in a different domain from the first, to surface.
 
 The first real end-to-end run, against a synthetic-but-realistic healthcare-data-scientist posting, worked. It correctly recommended the data-science variant, surfaced genuinely relevant real content, and nothing looked wrong. The second real run — an actual pasted contract posting, in a different domain, deliberately mentioning "FDA regulations" as an adversarial test of the forbidden-term guardrail, which held clean — looked wrong immediately: every single "surfaced" bullet in the assembled resume was an exact-text duplicate of a bullet already sitting in the Experience section above it. The model had tagged bullets it had *already used* in the recommended variant as "surfaced," implying they were unused, directly against what the prompt explicitly told it not to do.
 
@@ -109,10 +109,11 @@ python -m job_radar.cli list --location-contains "San Diego" --title-contains "A
 python -m job_hunt_agent.cli match-and-draft \
     --posting output/postings/2026-07-02/acadia-pharmaceuticals--....txt \
     --company "Acadia Pharmaceuticals" --role "Associate Director, AI/ML Engineering" \
-    --url "https://acadia.com/en-us/careers/job-board/8565787002?gh_jid=8565787002"
+    --url "https://acadia.com/en-us/careers/job-board/8565787002?gh_jid=8565787002" \
+    --ghost-score 0.0 --ghost-reasons ""
 ```
 
-That `--url` flag didn't exist in the original design — a drafted resume with no link back to where the posting came from is a real gap, not a small one, and it only became obvious once she went looking for the apply link after a real draft was already sitting there. It's threaded now: the ATS's own listing URL rides along from Job Radar's scored posting, through the match, into a metadata comment on both assembled documents, so the link is never more than one file away from the draft built for it.
+Neither `--url` nor `--ghost-score`/`--ghost-reasons` existed in the original design — a drafted resume with no link back to where the posting came from, and no visibility into how risky Job Radar already judged it to be, are real gaps, not small ones, and both only became obvious the same way: going looking for information after a real draft was already sitting there without it. Both are threaded now, the same way: riding along from Job Radar's scored posting, through the match, into a metadata comment on both assembled documents, one file away instead of a re-lookup.
 
 Neither project imports the other's code. Job Hunt Agent has no idea Job Radar exists, structurally — it just reads whatever `.txt` file it's pointed at, whether that came from a real ATS pull, a hand-pasted posting, or stdin. `scripts/run_pipeline.sh`, over in Job Radar, is what actually chains the two together for real command-line use — pull, filter, confirm, then `match-and-draft` against everything that made the cut — but it's a shell script calling two independent CLIs, not a merger of the two codebases. Either one can be rebuilt, replaced, or tested completely on its own.
 
@@ -138,7 +139,40 @@ def _init_filled_files(draft_dir: Path, force: bool) -> tuple[list[Path], list[P
     return created, skipped
 ```
 
-It held up under real use immediately: after the chronological-ordering fix, `draft` regenerated a real `resume.md` from scratch while `resume-filled.md` — already carrying real hand-integrated content for a real Acadia Pharmaceuticals application — was correctly left untouched. Diffing the two now shows, for any application, exactly what the pipeline produced automatically versus what a human actually decided to say.
+It held up under real use immediately: after the chronological-ordering fix, `draft` regenerated a real `resume.md` from scratch while `resume-filled.md` — already carrying real hand-integrated content for a real Acadia Pharmaceuticals application — was correctly left untouched.
+
+"Diffing the two shows what changed" started as something she'd have to actually go do — a real gap between what the design promised and what the tool did. `diff-filled` closes it: a real command, not a suggestion, writing `resume_filled_diff.md`/`cover_letter_filled_diff.md` as an actual unified diff. Run it right after `init-filled` and it correctly says "no differences" — nothing's been edited yet, that's not a bug, that's an accurate report. Run `match-and-draft` again later, after a real hand-review pass, and the same command tells the truth a second time: what actually changed, for that specific application, nothing assumed.
+
+## Closing a Gap Before It Broke Something, For Once
+
+Every bug in this post so far shares an origin story: something went wrong in a real draft first, and the fix came after. One didn't work that way. The FAQ this project ships already said, in plain language, that the surfaced-skills dedup had a known hole — "Large Language Models" could surface as new even when the résumé already said "LLM," because the dedup check only recognized a literal phrase match, not the same skill spelled two different ways. Writing that FAQ answer down was, in effect, filing a bug against a future draft that hadn't happened yet.
+
+The fix generalizes rather than patches around one case:
+
+```python
+def _acronym(phrase: str) -> str:
+    words = re.findall(r"[A-Za-z]+", phrase)
+    if len(words) < 2:
+        return ""
+    return "".join(w[0] for w in words).upper()
+```
+
+A surfaced skill counts as already-present if its literal phrase is in the résumé's Skills line, *or* if its acronym is — "Large Language Models" reduces to "LLM," which is already sitting there in "LLM Observability." No hand-maintained synonym table, no special-casing MCP or any other specific acronym; the same few lines catch anything shaped the same way. Checked against the real vault directly, not just the fixture: `_already_present("Large Language Models", <the real ai-engineering Skills line>)` returns `True`, exactly the case the FAQ had flagged.
+
+## A Company Brief and a Risk Score, One Command Away
+
+Two more additions round out what happens before a human ever opens an editor. `company-brief` does a best-effort extraction of a posting's "About &lt;Company&gt;" blurb — heuristic, not authoritative, built to save a re-read of the whole raw posting when it's time to write the paragraph the vault says must always be written fresh:
+
+```
+$ python -m job_hunt_agent.cli company-brief --posting acadia-posting.txt
+Acadia is committed to turning scientific promise into meaningful
+innovation that makes the difference for underserved neurological and
+rare disease communities around the world...
+```
+
+Tested against a random sample of real postings pulled from job-radar — Anthropic, LangChain, Adaptive Biotechnologies — not just the one Acadia posting everything else in this post is grounded in, since a heuristic that only works on the example you built it against isn't really working. And Job Radar's ghost-risk score threads through the same way `--url` does now, landing in the same metadata comment — so the risk signal is visible before editing time gets spent, not after.
+
+All four of these — `init-filled`, `diff-filled`, `company-brief`, and the ghost-score thread — run automatically now every time `match-and-draft` does, each with its own `--no-*` flag to skip it. Nothing here writes the company-specific paragraph or the closing line for her. It just makes sure everything she'd want to know or compare before writing them is already sitting there when she opens the file.
 
 ## Next Steps
 
@@ -154,4 +188,4 @@ Job Hunt Agent lives alongside Job Radar and the strategic-reports pipeline in t
 
 ## AI Use Statement
 
-Our heroine asked Claude Code to build Job Hunt Agent end to end — the vault parser, the two-phase matcher, the guardrails, the assembler, all of it — deliberately mirroring the strategic-reports pipeline's own architecture, since that project is the flagship example on her AI-engineering resume and this gives her a second one. Every real scope boundary was her explicit call, confirmed one at a time rather than assumed: the vault stays fully read-only with no sync option at all, no Prefect since postings arrive on demand rather than on a schedule, no job-board scraping in this project specifically (that became Job Radar, later, as its own project), no backfill of old application history. Every bug described above was caught by actually running the pipeline against the real vault and real postings, not by trusting a passing test suite — nine real bugs now, across two build phases and several real end-to-end runs, all covered by regression tests written *after* the fact, from the failure, not before it — several confirmed via `git stash`-ing just the fix to prove the new test genuinely failed without it, not just that it passed with it. Claude drafted this article in her voice, and its later revisions, from two of her own posts supplied as reference, which she then edited before publication.
+Our heroine asked Claude Code to build Job Hunt Agent end to end — the vault parser, the two-phase matcher, the guardrails, the assembler, all of it — deliberately mirroring the strategic-reports pipeline's own architecture, since that project is the flagship example on her AI-engineering resume and this gives her a second one. Every real scope boundary was her explicit call, confirmed one at a time rather than assumed: the vault stays fully read-only with no sync option at all, no Prefect since postings arrive on demand rather than on a schedule, no job-board scraping in this project specifically (that became Job Radar, later, as its own project), no backfill of old application history. Every bug described above was caught by actually running the pipeline against the real vault and real postings, not by trusting a passing test suite — nine real bugs now, across two build phases and several real end-to-end runs, all covered by regression tests written *after* the fact, from the failure, not before it — several confirmed via `git stash`-ing just the fix to prove the new test genuinely failed without it, not just that it passed with it. The tenth gap — the acronym/expansion dedup hole — is the one exception worth naming: found and closed from something the project's own FAQ had already written down, not from a broken draft. Claude drafted this article in her voice, and its later revisions, from two of her own posts supplied as reference, which she then edited before publication.
