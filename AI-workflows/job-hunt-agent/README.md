@@ -146,6 +146,11 @@ python -m job_hunt_agent.cli track list
 
 `--posting -` reads the posting text from stdin instead of a file.
 
+Postings don't have to be pasted by hand — see
+[`../job-radar/`](../job-radar/) for pulling and ghost-risk-scoring postings
+from ATS APIs, and its README's "Running the full pipeline from the command
+line" section for chaining the two projects together with a script.
+
 ## Configuration
 
 Same pattern as `strategic-reports`: every option is a CLI flag *and* an

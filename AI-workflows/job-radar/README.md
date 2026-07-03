@@ -127,6 +127,10 @@ python -m job_radar.cli list --title-contains "ML Engineer" --location-contains 
 
 python -m job_radar.cli show output/postings/<date>/<slug>.json
 
+# find a company's ATS slug automatically instead of guessing by hand
+python -m job_radar.cli discover-slug "Acadia Pharmaceuticals"
+python -m job_radar.cli discover-slug "Acadia Pharmaceuticals" --add
+
 # hand a pulled posting straight to job-hunt-agent
 python -m job_hunt_agent.cli match \
     --posting job-radar/output/postings/<date>/<slug>.txt \
@@ -140,6 +144,101 @@ python -m job_hunt_agent.cli match \
 | `JOB_RADAR_HOME` | Project root (for `output/`) | current directory |
 | `JOB_RADAR_COMPANIES_PATH` | Path to `companies.json` | `$JOB_RADAR_HOME/config/companies.json` |
 | `JOB_RADAR_SEEN_STORE_PATH` | Path to the seen-posting store | `$JOB_RADAR_HOME/output/seen_store.json` |
+
+## Running the full pipeline from the command line (no Claude Code)
+
+Everything in this project runs as a plain CLI — nothing here depends on
+Claude Code to orchestrate. This section is the complete, standalone
+sequence: one-time setup, then either the manual step-by-step commands or
+the bundled convenience script.
+
+### One-time setup
+
+Both projects need their own virtualenv — they're independent (see "Design
+decisions" above), so there are two separate installs, not one:
+
+```bash
+cd AI-workflows/job-radar
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+cd ../job-hunt-agent
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+`job-hunt-agent` also needs an LLM configured — it's the only one of the two
+that makes LLM calls. Same env vars either project's README documents
+(`LLM_MODEL` plus whatever your provider needs, e.g. `OLLAMA_API_BASE` /
+`OLLAMA_API_KEY` for a hosted Ollama endpoint):
+
+```bash
+export LLM_MODEL="ollama_chat/gpt-oss:120b"
+export OLLAMA_API_BASE="https://your-ollama-host"
+export OLLAMA_API_KEY="..."
+```
+
+### Manual step-by-step chaining
+
+This is what the convenience script below automates — worth knowing by hand
+since it's the same three commands regardless of platform, and makes it
+obvious where to customize (different filters, skip the draft step, run
+`match` instead of `match-and-draft`, etc.):
+
+```bash
+# 1. Pull fresh postings (job-radar)
+cd AI-workflows/job-radar
+.venv/bin/python -m job_radar.cli pull
+
+# 2. Pick postings to act on — --paths prints .txt file paths instead of
+#    the table, one per line, so a shell loop can consume them directly
+.venv/bin/python -m job_radar.cli list --location-contains "San Diego" --paths
+#   /path/to/job-radar/output/postings/2026-07-02/acadia-pharmaceuticals--...txt
+#   /path/to/job-radar/output/postings/2026-07-02/fate-therapeutics--...txt
+
+# 3. Hand each one to job-hunt-agent (job-hunt-agent) — company/role come
+#    from the sibling .json file's posting.company / posting.title fields
+cd ../job-hunt-agent
+.venv/bin/python -m job_hunt_agent.cli match-and-draft \
+    --posting /path/to/job-radar/output/postings/2026-07-02/acadia-pharmaceuticals--....txt \
+    --company "Acadia Pharmaceuticals" \
+    --role "Associate Director, AI/ML Engineering"
+```
+
+Looping over several matched postings without the convenience script:
+
+```bash
+cd AI-workflows/job-radar
+for txt in $(.venv/bin/python -m job_radar.cli list --location-contains Remote --paths); do
+    json="${txt%.txt}.json"
+    company=$(.venv/bin/python -c "import json,sys; print(json.load(open(sys.argv[1]))['posting']['company'])" "$json")
+    role=$(.venv/bin/python -c "import json,sys; print(json.load(open(sys.argv[1]))['posting']['title'])" "$json")
+    ( cd ../job-hunt-agent && .venv/bin/python -m job_hunt_agent.cli match-and-draft \
+        --posting "$txt" --company "$company" --role "$role" )
+done
+```
+
+### `scripts/run_pipeline.sh` — the same thing, bundled
+
+```bash
+scripts/run_pipeline.sh --location-contains "San Diego"
+scripts/run_pipeline.sh --title-contains "Data Scientist" --location-contains Remote
+scripts/run_pipeline.sh --company "Acadia Pharmaceuticals" --yes
+```
+
+Runs `pull`, shows what matched your filters, asks for confirmation (each
+posting is a real LLM call — costs time and, depending on your provider,
+money), then runs `match-and-draft` against every matched posting. Every
+flag except `--yes` passes straight through to `job_radar.cli list`, so any
+combination of `--company`/`--title-contains`/`--location-contains`/
+`--max-ghost-score` works. `--yes` skips the confirmation prompt, for when
+you've already reviewed the list and want to automate the rest (e.g. from
+cron or another script — though see "No scheduling / no Prefect" above for
+why job-radar itself doesn't do that scheduling for you).
+
+The script is pure shell calling each project's CLI as a subprocess — it
+doesn't import either project's Python code, keeping the same independence
+the two projects have from each other.
 
 ## Finding companies to add — including localized to you or remote
 
@@ -160,7 +259,48 @@ step, same as picking which RSS feeds go in `strategic-reports`:
    - Greenhouse: `job-boards.greenhouse.io/<slug>` or `boards.greenhouse.io/<slug>`
    - Lever: `jobs.lever.co/<slug>`
    - Ashby: `jobs.ashbyhq.com/<slug>`
-3. Add `{"name": ..., "ats": ..., "slug": ...}` to `config/companies.json`.
+3. Add `{"name": ..., "ats": ..., "slug": ...}` to `config/companies.json` —
+   or use `discover-slug` below to automate step 2 once you already know
+   which company you want.
+
+## Automatically finding a company's slug
+
+Once you know *which* company you want (from the manual discovery process
+above, or just because you already know its name), `discover-slug` automates
+the guess-and-verify step — the same process used by hand to seed
+`config/companies.json`'s starter list:
+
+```bash
+python -m job_radar.cli discover-slug "Acadia Pharmaceuticals"
+#   greenhouse acadiapharmaceuticals          53 jobs
+
+python -m job_radar.cli discover-slug "Acadia Pharmaceuticals" --add
+#   Added Acadia Pharmaceuticals (greenhouse:acadiapharmaceuticals) to config/companies.json
+```
+
+It generates a handful of plausible slug spellings from the name (the full
+name concatenated, hyphenated, and just the first word — e.g. "Acadia
+Pharmaceuticals" → `acadiapharmaceuticals`, `acadia-pharmaceuticals`,
+`acadia`) and checks each one against the real Greenhouse/Lever/Ashby APIs
+concurrently. This is **not** company search — it can only confirm or reject
+a slug for a company name you already have in mind, not discover companies
+you haven't heard of; that part stays the manual aggregator-search process
+above, by the same "no scraping" design decision.
+
+Only slugs that come back with actual live postings are reported, but a
+short or generic company name can still coincidentally collide with an
+unrelated real board (a two-person startup that happens to also be called
+"Acme"), so review `job_count` and the company name before trusting a match,
+especially when `--add` is involved:
+
+- `--add` only writes to `config/companies.json` when there's **exactly one**
+  confirmed match — it never guesses which of several is the real company.
+- If there are multiple matches, re-run with `--pick '<ats>:<slug>'` (shown
+  in the plain listing) to explicitly choose one.
+- Re-running `--add` for an already-added `(ats, slug)` pair is a safe no-op,
+  not a duplicate entry.
+- Existing `_comment`/`_note` fields and other entries in `companies.json`
+  are preserved untouched — only a new entry is appended.
 
 ## Narrowing to a location or profession
 
@@ -189,7 +329,7 @@ one canonical spelling.
 pytest tests/
 ```
 
-42 tests, no network access — every ATS response is mocked at the same
+59 tests, no network access — every ATS response is mocked at the same
 call-site granularity `strategic-reports/tests/test_ingestion.py` documents
 for `feedparser.parse` (patch where the name is looked up, not where it's
 defined).
@@ -199,16 +339,19 @@ defined).
 ```
 job-radar/
 ├── job_radar/
-│   ├── cli.py                  <- Typer CLI: pull, list, show
+│   ├── cli.py                  <- Typer CLI: pull, list, show, discover-slug
 │   └── core/
-│       ├── models.py           <- CompanyConfig, RawPosting, GhostSignal, ScoredPosting
+│       ├── models.py           <- CompanyConfig, RawPosting, GhostSignal, ScoredPosting, DiscoveredSlug
 │       ├── ats_clients.py      <- Greenhouse/Lever/Ashby async fetchers, error-isolated
 │       ├── ghost_scoring.py    <- deterministic heuristic scorer
 │       ├── seen_store.py       <- SeenPostingStore, flat-JSON backed
+│       ├── slug_discovery.py   <- candidate slug generation + live-probe against ATS APIs
 │       └── source.py           <- load_companies() + pull_postings() orchestration
 ├── config/
 │   └── companies.json          <- your target companies (placeholders shipped)
-├── tests/                      <- 42 tests, all HTTP mocked, no real network
+├── scripts/
+│   └── run_pipeline.sh         <- chains job-radar + job-hunt-agent from the shell
+├── tests/                      <- 59 tests, all HTTP mocked, no real network
 └── output/                     <- gitignored; postings/, seen_store.json generated at runtime
 ```
 

@@ -58,3 +58,9 @@ class ScoredPosting(BaseModel):
     first_seen_at: datetime
     last_seen_at: datetime
     seen_count: int
+
+
+class DiscoveredSlug(BaseModel):
+    ats: ATSPlatform
+    slug: str
+    job_count: int = Field(description="Number of live postings found at this slug — confirms it's a real, active board.")
