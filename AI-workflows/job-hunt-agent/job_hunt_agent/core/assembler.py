@@ -17,7 +17,10 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from job_hunt_agent.core.guardrails import scan_for_violations, word_boundary_pattern
 from job_hunt_agent.core.models import DraftCoverLetter, DraftResume, JobMatchResult
-from job_hunt_agent.core.vault_models import VaultSnapshot
+from job_hunt_agent.core.vault_models import EmployerExperience, VaultSnapshot
+
+_DATE_SEPARATOR_RE = re.compile(r"[-–—]")  # hyphen, en dash, em dash
+_MONTH_YEAR_RE = re.compile(r"(?:(?P<month>[A-Za-z]+)\s+)?(?P<year>\d{4})\s*$")
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 _env = Environment(
@@ -32,6 +35,37 @@ def slugify(*parts: str) -> str:
     joined = "-".join(p for p in parts if p)
     slug = re.sub(r"[^a-z0-9]+", "-", joined.lower()).strip("-")
     return slug or "untitled"
+
+
+def _month_number(name: str | None) -> int:
+    if not name:
+        return 1
+    for fmt in ("%B", "%b"):
+        try:
+            return datetime.strptime(name, fmt).month
+        except ValueError:
+            continue
+    return 1
+
+
+def _experience_end_date_key(exp: EmployerExperience) -> tuple[int, int]:
+    """(year, month) sort key from the free-text `dates` field, for
+    reverse-chronological Experience ordering — dates.md-style fields are
+    free text a human edits directly in Obsidian ("November 2023 – April
+    2026", "2020 - 2024", "Present"), not a strict machine format, so this
+    is deliberately best-effort: unparseable or missing dates sort last
+    rather than raising, consistent with vault_reader.py's lenient-parsing
+    philosophy elsewhere.
+    """
+    if not exp.dates:
+        return (0, 0)
+    end_part = _DATE_SEPARATOR_RE.split(exp.dates)[-1].strip()
+    if end_part.lower() in ("present", "current", "ongoing"):
+        return (9999, 12)
+    match = _MONTH_YEAR_RE.search(end_part)
+    if not match:
+        return (0, 0)
+    return (int(match.group("year")), _month_number(match.group("month")))
 
 
 def _first_template_option(text: str) -> str:
@@ -67,6 +101,12 @@ def assemble_draft_resume(
         bullets = [b for b in exp.bullets if variant_slug in b.used_in]
         if bullets:
             employer_bullets.append({"employer": exp, "bullets": bullets})
+    # vault.experience iterates in alphabetical-by-filename order (that's how
+    # vault_reader.py discovers Resumes/experience/*.md) — not chronological.
+    # A resume's Experience section needs reverse-chronological order, so
+    # sort explicitly here rather than relying on file-loading order to
+    # happen to match, which it does only by coincidence for some vaults.
+    employer_bullets.sort(key=lambda eb: _experience_end_date_key(eb["employer"]), reverse=True)
 
     surfaced_bullets = []
     surfaced_skills = []

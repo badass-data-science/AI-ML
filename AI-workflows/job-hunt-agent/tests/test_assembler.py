@@ -44,6 +44,25 @@ class TestAssembleDraftResume:
         assert draft.output_path.name == "resume.md"
         assert draft.variant == "data-science"
 
+    def test_experience_ordered_reverse_chronologically_not_alphabetically(
+        self, loaded_vault, match_result, tmp_path
+    ):
+        # Regression test for a real bug: vault_reader.py loads
+        # Resumes/experience/*.md via sorted(glob(...)) — alphabetical by
+        # filename, not by date — and assembler.py rendered Experience in
+        # that same order with no date sort applied. "Zenith Corp" (2024 -
+        # 2026, zenith-corp.md) sorts alphabetically *after* "Acme Corp"
+        # (2020 - 2024, acme-corp.md) but is dated more recently, so a
+        # correct reverse-chronological render must place Zenith first.
+        draft = assemble_draft_resume(match_result, loaded_vault, tmp_path)
+        text = draft.output_path.read_text()
+        # search for the Experience-section employer headings specifically —
+        # not bare "Acme Corp", which also appears in the draft's metadata
+        # comment as the (unrelated) applicant-side company name
+        assert "Data Scientist | Zenith Corp" in text
+        assert "Data Scientist | Acme Corp" in text
+        assert text.index("Data Scientist | Zenith Corp") < text.index("Data Scientist | Acme Corp")
+
     def test_resume_contains_variant_content(self, loaded_vault, match_result, tmp_path):
         draft = assemble_draft_resume(match_result, loaded_vault, tmp_path)
         text = draft.output_path.read_text()

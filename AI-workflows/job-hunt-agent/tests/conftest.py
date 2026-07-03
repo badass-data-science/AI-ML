@@ -187,6 +187,29 @@ Built machine learning pipelines using Python and scikit-learn for internal repo
     )
 
     _write(
+        vault / "Resumes" / "experience" / "zenith-corp.md",
+        """---
+employer: Zenith Corp
+title: Data Scientist
+dates: 2024 - 2026
+---
+
+# Zenith Corp — Data Scientist
+*2024 - 2026*
+
+Deliberately named/filed to sort alphabetically *after* acme-corp.md
+(z > a) despite being dated *more recently*, to test that Experience
+ordering is chronological and not just alphabetical file-loading order.
+
+## Bullets
+
+### zenith-recent-work
+**Used in:** data-science
+Did recent data science work at Zenith
+""",
+    )
+
+    _write(
         vault / "Resumes" / "projects.md",
         """# Selected Projects Library
 

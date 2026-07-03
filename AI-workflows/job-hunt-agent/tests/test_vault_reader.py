@@ -76,7 +76,7 @@ class TestLoadExperience:
 
     def test_all_experience_bullets_helper(self, fixture_vault: Path):
         snap = load_vault(fixture_vault)
-        assert len(snap.all_experience_bullets()) == 5
+        assert len(snap.all_experience_bullets()) == 6
 
     def test_superseded_by_parsed_from_used_in_line(self, fixture_vault: Path):
         snap = load_vault(fixture_vault)
