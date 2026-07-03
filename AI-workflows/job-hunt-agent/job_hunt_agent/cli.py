@@ -8,6 +8,7 @@ Usage:
     python -m job_hunt_agent.cli init-filled --draft-dir output/drafts/acme-data-scientist-2026-01-01
 
     # match-and-draft also creates resume-filled.md/cover_letter-filled.md automatically (pass --no-init-filled to skip)
+    # and copies the source posting into the draft directory as posting.txt (both draft and match-and-draft do this; no opt-out)
     python -m job_hunt_agent.cli match-and-draft --posting posting.txt --company Acme --role "Data Scientist"
     python -m job_hunt_agent.cli track add --company Acme --role "Data Scientist" --variant data-science --register formal-professional
     python -m job_hunt_agent.cli track list
@@ -63,6 +64,19 @@ def _read_posting_text(posting: str) -> str:
     if not path.is_file():
         raise typer.BadParameter(f"posting file not found: {posting}")
     return path.read_text(encoding="utf-8")
+
+
+def _write_posting_copy(draft_dir: Path, posting_text: str) -> Path:
+    """Copy the raw posting text into the draft directory as posting.txt.
+
+    Keeps the source posting one file away from resume.md/cover_letter.md
+    for the human-review pass, without requiring a re-lookup of wherever
+    the original --posting path or match.json came from.
+    """
+    draft_dir.mkdir(parents=True, exist_ok=True)
+    out_path = draft_dir / "posting.txt"
+    out_path.write_text(posting_text, encoding="utf-8")
+    return out_path
 
 
 async def _run_match(job: JobPosting, model: str, vault_path: Path) -> JobMatchResult:
@@ -219,6 +233,7 @@ def draft_cmd(
 
     resume = assemble_draft_resume(result, vault, output_dir, variant_override=variant)
     letter = assemble_draft_cover_letter(result, vault, output_dir, register_override=register)
+    posting_copy = _write_posting_copy(output_dir, result.job.raw_text)
 
     typer.echo(f"Resume draft ({resume.variant}): {resume.output_path}")
     if resume.warnings:
@@ -230,6 +245,7 @@ def draft_cmd(
         typer.echo("  WARNINGS:")
         for w in letter.warnings:
             typer.echo(f"    - {w}")
+    typer.echo(f"Posting copy: {posting_copy}")
 
 
 def _init_filled_files(draft_dir: Path, force: bool) -> tuple[list[Path], list[Path]]:
@@ -419,6 +435,7 @@ def match_and_draft_cmd(
     output_dir = home / "output" / "drafts" / slug
     resume = assemble_draft_resume(result, vault, output_dir)
     letter = assemble_draft_cover_letter(result, vault, output_dir, register_override=register)
+    posting_copy = _write_posting_copy(output_dir, posting_text)
 
     typer.echo(f"Resume draft ({resume.variant}): {resume.output_path}")
     if resume.warnings:
@@ -428,6 +445,7 @@ def match_and_draft_cmd(
     if letter.warnings:
         for w in letter.warnings:
             typer.echo(f"  WARNING: {w}")
+    typer.echo(f"Posting copy: {posting_copy}")
 
     if init_filled:
         created, skipped = _init_filled_files(output_dir, force=False)

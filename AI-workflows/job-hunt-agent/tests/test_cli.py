@@ -190,6 +190,27 @@ class TestDraftCmd:
         assert result.exit_code == 0, result.stdout
         assert "ai-engineering" in result.stdout
 
+    def test_writes_posting_copy(
+        self, fixture_vault: Path, sample_job_posting, sample_llm_output, tmp_path: Path
+    ):
+        match_path = self._write_match_json(tmp_path, sample_job_posting, sample_llm_output)
+        output_dir = tmp_path / "draft-out"
+
+        result = runner.invoke(
+            app,
+            [
+                "draft",
+                "--match", str(match_path),
+                "--vault-path", str(fixture_vault),
+                "--output-dir", str(output_dir),
+            ],
+        )
+
+        assert result.exit_code == 0, result.stdout
+        posting_copy = output_dir / "posting.txt"
+        assert posting_copy.read_text(encoding="utf-8") == sample_job_posting.raw_text
+        assert "Posting copy" in result.stdout
+
 
 class TestInitFilledCmd:
     def test_creates_filled_copies_of_both_drafts(self, tmp_path: Path):
@@ -428,6 +449,19 @@ class TestMatchAndDraftCmd:
         )
         assert result.exit_code == 0, result.stdout
         assert "Company brief" not in result.stdout
+
+    def test_writes_posting_copy_by_default(
+        self, fixture_vault: Path, sample_llm_output, tmp_path: Path
+    ):
+        posting_text = "Data Scientist role requiring Python and ML, for the posting-copy test."
+        result = self._invoke_match_and_draft(
+            fixture_vault, sample_llm_output, tmp_path, posting_text=posting_text
+        )
+
+        assert result.exit_code == 0, result.stdout
+        posting_copy = next((tmp_path / "output" / "drafts").rglob("posting.txt"))
+        assert posting_copy.read_text(encoding="utf-8") == posting_text
+        assert "Posting copy" in result.stdout
 
 
 class TestTrackCommands:

@@ -212,7 +212,8 @@ python -m job_hunt_agent.cli draft --match output/matches/acme-data-scientist-<d
 
 # or do both in one step — the common real-world path. Also creates
 # resume-filled.md/cover_letter-filled.md automatically, the editable
-# copies to do your actual human-review pass into (--no-init-filled to skip)
+# copies to do your actual human-review pass into (--no-init-filled to skip),
+# and copies the posting itself in as posting.txt for easy side-by-side review
 python -m job_hunt_agent.cli match-and-draft --posting posting.txt --company Acme --role "Data Scientist"
 
 # re-create the *-filled.md copies standalone (e.g. after manually deleting
@@ -265,7 +266,7 @@ logic.
 pytest tests/
 ```
 
-143 tests, all against a synthetic fixture vault built fresh under `tmp_path`
+145 tests, all against a synthetic fixture vault built fresh under `tmp_path`
 in `tests/conftest.py` — no test ever touches the real `vault-Resume`.
 `asyncio_mode = auto` (pytest.ini), same as `strategic-reports`.
 
@@ -288,7 +289,7 @@ job-hunt-agent/
 │       ├── posting_utils.py    <- best-effort "About <Company>" extraction from raw posting text
 │       └── tracker.py          <- ApplicationStore, flat-JSON backed
 │   └── templates/               <- Jinja2 templates for the two draft documents
-├── tests/                       <- 143 tests, fixture-vault-only, no real-vault or real-LLM calls
+├── tests/                       <- 145 tests, fixture-vault-only, no real-vault or real-LLM calls
 └── output/                      <- gitignored; matches/, drafts/, tracker/ generated at runtime
 ```
 
@@ -296,6 +297,7 @@ job-hunt-agent/
 
 - `output/matches/{slug}/match.json` — the full `JobMatchResult` from a `match` run, re-loadable by `draft`.
 - `output/drafts/{slug}/resume.md`, `cover_letter.md` — assembled drafts, always marked as needing human review. Pristine, reproducible output of `draft` — safe to regenerate any time the match or the code changes, since nothing gets hand-edited into these directly. If job-radar's ghost-risk score was passed in (`--ghost-score`/`--ghost-reasons`), it's in the metadata comment alongside the source URL.
+- `output/drafts/{slug}/posting.txt` — a copy of the exact posting text the drafts were built from, written automatically by both `draft` and `match-and-draft`. No flag to skip it — it's a plain copy, not a generated artifact, so there's no meaningful "no" to opt into. Keeps the posting one file away during the human-review pass instead of a re-lookup of wherever the original `--posting` path (or the match.json it came from) happened to point.
 - `output/drafts/{slug}/resume-filled.md`, `cover_letter-filled.md` — editable copies of the above, created automatically by `match-and-draft` (or explicitly via `init-filled`). This is where the actual human-review pass happens (surfaced-content integration, the company-specific paragraph, closing-line specifics), so re-running `draft`/`match-and-draft` never clobbers that work.
 - `output/drafts/{slug}/resume_filled_diff.md`, `cover_letter_filled_diff.md` — a unified diff between each pristine draft and its `-filled.md` sibling, from `diff-filled`. Shows exactly what a given human-review pass actually changed; always safe to regenerate, since a diff is disposable.
 - `output/tracker/applications.json` — the local application tracker.
