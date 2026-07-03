@@ -147,10 +147,20 @@ it) carries the same way `--url` does — into `match.json` and both drafts'
 metadata comment, so you see the risk signal before investing editing time,
 not after. `company-brief` does a best-effort extraction of a posting's
 "About &lt;Company&gt;" blurb to save re-reading the whole raw posting when
-writing the company-specific paragraph. Neither one writes anything into a
-draft — the company-specific paragraph and closing line still have to be
-written fresh, per the vault's own rules; these just put the raw material
-for that writing one command away instead of a full re-read.
+writing the company-specific paragraph. `diff-filled` writes a real unified
+diff between each pristine draft and its `-filled.md` sibling. None of these
+write anything into a draft itself — the company-specific paragraph and
+closing line still have to be written fresh, per the vault's own rules;
+these just put the raw material, and a record of what changed, one command
+away instead of a full re-read or a by-hand `diff`.
+
+`match-and-draft` runs `init-filled`, `diff-filled`, and `company-brief`
+automatically after every draft (`--no-init-filled`/`--no-diff-filled`/
+`--no-company-brief` to skip any of them) — a `diff-filled` run immediately
+after generation will just say "no differences," since nothing's been
+edited yet, but it stays useful: re-running `match-and-draft` later (say,
+after a code fix, which happened more than once building this project)
+refreshes the diff to reflect whatever you've actually changed by then.
 
 ### No job-board scraping in v1
 
@@ -255,7 +265,7 @@ logic.
 pytest tests/
 ```
 
-138 tests, all against a synthetic fixture vault built fresh under `tmp_path`
+143 tests, all against a synthetic fixture vault built fresh under `tmp_path`
 in `tests/conftest.py` — no test ever touches the real `vault-Resume`.
 `asyncio_mode = auto` (pytest.ini), same as `strategic-reports`.
 
@@ -278,7 +288,7 @@ job-hunt-agent/
 │       ├── posting_utils.py    <- best-effort "About <Company>" extraction from raw posting text
 │       └── tracker.py          <- ApplicationStore, flat-JSON backed
 │   └── templates/               <- Jinja2 templates for the two draft documents
-├── tests/                       <- 138 tests, fixture-vault-only, no real-vault or real-LLM calls
+├── tests/                       <- 143 tests, fixture-vault-only, no real-vault or real-LLM calls
 └── output/                      <- gitignored; matches/, drafts/, tracker/ generated at runtime
 ```
 

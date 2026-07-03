@@ -315,9 +315,11 @@ class TestMatchAndDraftCmd:
         assert list((tmp_path / "output" / "drafts").rglob("resume.md"))
         assert list((tmp_path / "output" / "drafts").rglob("cover_letter.md"))
 
-    def _invoke_match_and_draft(self, fixture_vault, sample_llm_output, tmp_path, extra_args=()):
+    def _invoke_match_and_draft(
+        self, fixture_vault, sample_llm_output, tmp_path, extra_args=(), posting_text=None
+    ):
         posting_file = tmp_path / "posting.txt"
-        posting_file.write_text("Data Scientist role requiring Python and ML.")
+        posting_file.write_text(posting_text or "Data Scientist role requiring Python and ML.")
         with patch("job_hunt_agent.cli.LLMClient", _mock_llm_client_class(sample_llm_output)):
             return runner.invoke(
                 app,
@@ -363,6 +365,69 @@ class TestMatchAndDraftCmd:
         assert result.exit_code == 0, result.stdout
         assert filled_path.read_text() == "# Hand-edited content, do not lose"
         assert "already exists, left untouched" in result.stdout
+
+    def test_writes_diff_files_by_default(self, fixture_vault: Path, sample_llm_output, tmp_path: Path):
+        result = self._invoke_match_and_draft(fixture_vault, sample_llm_output, tmp_path)
+        assert result.exit_code == 0, result.stdout
+        assert list((tmp_path / "output" / "drafts").rglob("resume_filled_diff.md"))
+        assert list((tmp_path / "output" / "drafts").rglob("cover_letter_filled_diff.md"))
+        assert "Diff written" in result.stdout
+
+    def test_no_diff_filled_flag_skips_diffs(
+        self, fixture_vault: Path, sample_llm_output, tmp_path: Path
+    ):
+        result = self._invoke_match_and_draft(
+            fixture_vault, sample_llm_output, tmp_path, extra_args=["--no-diff-filled"]
+        )
+        assert result.exit_code == 0, result.stdout
+        assert not list((tmp_path / "output" / "drafts").rglob("resume_filled_diff.md"))
+
+    def test_rerun_refreshes_diff_after_hand_edit(
+        self, fixture_vault: Path, sample_llm_output, tmp_path: Path
+    ):
+        self._invoke_match_and_draft(fixture_vault, sample_llm_output, tmp_path)
+        filled_path = next((tmp_path / "output" / "drafts").rglob("resume-filled.md"))
+        filled_path.write_text("# Hand-edited content", encoding="utf-8")
+
+        self._invoke_match_and_draft(fixture_vault, sample_llm_output, tmp_path)
+
+        diff_path = next((tmp_path / "output" / "drafts").rglob("resume_filled_diff.md"))
+        assert "Hand-edited content" in diff_path.read_text()
+
+    def test_prints_company_brief_by_default(
+        self, fixture_vault: Path, sample_llm_output, tmp_path: Path
+    ):
+        result = self._invoke_match_and_draft(
+            fixture_vault,
+            sample_llm_output,
+            tmp_path,
+            posting_text=(
+                "**About Acme Corp**\n\n"
+                "Acme Corp builds tools that matter for people who need them "
+                "across many industries and regions worldwide.\n\n"
+                "### Position Summary\n\nDoes things."
+            ),
+        )
+        assert result.exit_code == 0, result.stdout
+        assert "Company brief" in result.stdout
+        assert "Acme Corp builds tools that matter" in result.stdout
+
+    def test_no_company_brief_flag_skips_it(
+        self, fixture_vault: Path, sample_llm_output, tmp_path: Path
+    ):
+        result = self._invoke_match_and_draft(
+            fixture_vault,
+            sample_llm_output,
+            tmp_path,
+            extra_args=["--no-company-brief"],
+            posting_text=(
+                "**About Acme Corp**\n\n"
+                "Acme Corp builds tools that matter for people who need them "
+                "across many industries and regions worldwide."
+            ),
+        )
+        assert result.exit_code == 0, result.stdout
+        assert "Company brief" not in result.stdout
 
 
 class TestTrackCommands:

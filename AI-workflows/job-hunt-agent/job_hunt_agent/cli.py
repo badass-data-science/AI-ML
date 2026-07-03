@@ -382,6 +382,18 @@ def match_and_draft_cmd(
         "--init-filled/--no-init-filled",
         help="Also create resume-filled.md/cover_letter-filled.md (skipped if they already exist — never overwritten here).",
     ),
+    diff_filled: bool = typer.Option(
+        True,
+        "--diff-filled/--no-diff-filled",
+        help="Also (re)write resume_filled_diff.md/cover_letter_filled_diff.md. On a first run this just says "
+        "'no differences' — the *-filled.md files were only just created — but it stays useful: re-running "
+        "match-and-draft later (e.g. after a code fix) refreshes the diff to reflect whatever you've since edited.",
+    ),
+    company_brief: bool = typer.Option(
+        True,
+        "--company-brief/--no-company-brief",
+        help="Also print the posting's best-effort 'About <Company>' blurb, for writing the company-specific paragraph.",
+    ),
 ) -> None:
     """Convenience: chain match + draft in one invocation — the common real-world path."""
     posting_text = _read_posting_text(posting)
@@ -423,6 +435,18 @@ def match_and_draft_cmd(
             typer.echo(f"Filled copy created: {t}")
         for t in skipped:
             typer.echo(f"Filled copy already exists, left untouched: {t}")
+
+    if diff_filled:
+        for base_name, diff_name in _DIFF_FILENAMES.items():
+            source = output_dir / base_name
+            filled = output_dir / f"{source.stem}-filled{source.suffix}"
+            if _write_diff(source, filled, output_dir / diff_name):
+                typer.echo(f"Diff written: {output_dir / diff_name}")
+
+    if company_brief:
+        brief = extract_company_brief(posting_text)
+        if brief:
+            typer.echo(f"\nCompany brief (for the company-specific paragraph):\n{brief}")
 
 
 def _tracker(tracker_path: Path) -> ApplicationStore:
