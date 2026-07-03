@@ -1,4 +1,4 @@
-<!-- Draft resume assembled by job-hunt-agent for {{ company or "?" }} / {{ role or "?" }} on {{ generated_at }}. Human review required before use — this is a draft, not a finished resume.{% if url %} Source posting: {{ url }}{% endif %} -->
+<!-- Draft resume assembled by job-hunt-agent for {{ company or "?" }} / {{ role or "?" }} on {{ generated_at }}. Human review required before use — this is a draft, not a finished resume.{% if url %} Source posting: {{ url }}{% endif %}{% if ghost_score is not none %} Ghost risk: {{ "%.2f"|format(ghost_score) }}{% if ghost_reasons %} ({{ ghost_reasons | join('; ') }}){% endif %}{% endif %} -->
 
 # {{ variant.subtitle }}
 

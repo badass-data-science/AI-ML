@@ -1,4 +1,4 @@
-<!-- Draft cover letter assembled by job-hunt-agent for {{ company or "?" }} / {{ role or "?" }} on {{ generated_at }}. Register: {{ register }}. Human review required before use.{% if url %} Source posting: {{ url }}{% endif %} -->
+<!-- Draft cover letter assembled by job-hunt-agent for {{ company or "?" }} / {{ role or "?" }} on {{ generated_at }}. Register: {{ register }}. Human review required before use.{% if url %} Source posting: {{ url }}{% endif %}{% if ghost_score is not none %} Ghost risk: {{ "%.2f"|format(ghost_score) }}{% if ghost_reasons %} ({{ ghost_reasons | join('; ') }}){% endif %}{% endif %} -->
 
 {{ salutation }}
 

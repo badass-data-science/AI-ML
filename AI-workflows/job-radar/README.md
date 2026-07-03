@@ -198,14 +198,17 @@ cd AI-workflows/job-radar
 
 # 3. Hand each one to job-hunt-agent (job-hunt-agent) — company/role/url come
 #    from the sibling .json file's posting.company / posting.title / posting.url
-#    fields. --url threads the original apply link into match.json and both
-#    drafts' metadata comment, so you don't have to dig it out by hand later.
+#    fields, and the ghost score/reasons from its top-level ghost field.
+#    --url threads the original apply link into match.json and both drafts'
+#    metadata comment; --ghost-score/--ghost-reasons do the same for the
+#    ghost-risk signal, so you see it before investing editing time, not after.
 cd ../job-hunt-agent
 .venv/bin/python -m job_hunt_agent.cli match-and-draft \
     --posting /path/to/job-radar/output/postings/2026-07-02/acadia-pharmaceuticals--....txt \
     --company "Acadia Pharmaceuticals" \
     --role "Associate Director, AI/ML Engineering" \
-    --url "https://acadia.com/en-us/careers/job-board/8565787002?gh_jid=8565787002"
+    --url "https://acadia.com/en-us/careers/job-board/8565787002?gh_jid=8565787002" \
+    --ghost-score 0.0 --ghost-reasons ""
 ```
 
 Looping over several matched postings without the convenience script:
@@ -217,8 +220,11 @@ for txt in $(.venv/bin/python -m job_radar.cli list --location-contains Remote -
     company=$(.venv/bin/python -c "import json,sys; print(json.load(open(sys.argv[1]))['posting']['company'])" "$json")
     role=$(.venv/bin/python -c "import json,sys; print(json.load(open(sys.argv[1]))['posting']['title'])" "$json")
     url=$(.venv/bin/python -c "import json,sys; print(json.load(open(sys.argv[1]))['posting']['url'])" "$json")
+    ghost_score=$(.venv/bin/python -c "import json,sys; print(json.load(open(sys.argv[1]))['ghost']['score'])" "$json")
+    ghost_reasons=$(.venv/bin/python -c "import json,sys; print('; '.join(json.load(open(sys.argv[1]))['ghost']['reasons']))" "$json")
     ( cd ../job-hunt-agent && .venv/bin/python -m job_hunt_agent.cli match-and-draft \
-        --posting "$txt" --company "$company" --role "$role" --url "$url" )
+        --posting "$txt" --company "$company" --role "$role" --url "$url" \
+        --ghost-score "$ghost_score" --ghost-reasons "$ghost_reasons" )
 done
 ```
 

@@ -32,6 +32,38 @@ class TestLoadVaultCmd:
         assert "acme-missing-used-in" in result.stdout
 
 
+class TestCompanyBriefCmd:
+    def test_extracts_about_section_from_posting_file(self, tmp_path: Path):
+        posting_file = tmp_path / "posting.txt"
+        posting_file.write_text(
+            "**About Acme Corp**\n\n"
+            "Acme Corp builds tools that matter for people who need them.\n\n"
+            "### Position Summary\n\nDoes things.",
+            encoding="utf-8",
+        )
+        result = runner.invoke(app, ["company-brief", "--posting", str(posting_file)])
+        assert result.exit_code == 0, result.stdout
+        assert "Acme Corp builds tools that matter" in result.stdout
+
+    def test_reads_from_stdin(self):
+        result = runner.invoke(
+            app,
+            ["company-brief", "--posting", "-"],
+            input=(
+                "Acme Corp is a leading provider of widgets across many industries "
+                "and countries worldwide, serving millions of customers every year."
+            ),
+        )
+        assert result.exit_code == 0, result.stdout
+        assert "leading provider of widgets" in result.stdout
+
+    def test_no_extractable_content_errors(self, tmp_path: Path):
+        posting_file = tmp_path / "posting.txt"
+        posting_file.write_text("# Title\n\n### Requirements\n\n- X", encoding="utf-8")
+        result = runner.invoke(app, ["company-brief", "--posting", str(posting_file)])
+        assert result.exit_code == 1
+
+
 class TestMatchCmd:
     def test_writes_match_json_and_prints_summary(
         self, fixture_vault: Path, sample_llm_output, tmp_path: Path
@@ -202,6 +234,60 @@ class TestInitFilledCmd:
     def test_no_draft_files_present_errors(self, tmp_path: Path):
         result = runner.invoke(app, ["init-filled", "--draft-dir", str(tmp_path)])
         assert result.exit_code == 1
+
+
+class TestDiffFilledCmd:
+    def test_writes_diff_showing_added_and_removed_lines(self, tmp_path: Path):
+        (tmp_path / "resume.md").write_text("line one\nline two\n", encoding="utf-8")
+        (tmp_path / "resume-filled.md").write_text("line one\nline two edited\nline three\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["diff-filled", "--draft-dir", str(tmp_path)])
+
+        assert result.exit_code == 0, result.stdout
+        diff_path = tmp_path / "resume_filled_diff.md"
+        assert diff_path.exists()
+        text = diff_path.read_text()
+        assert "```diff" in text
+        assert "-line two" in text
+        assert "+line two edited" in text
+        assert "+line three" in text
+        assert "Written" in result.stdout
+
+    def test_identical_files_report_no_differences(self, tmp_path: Path):
+        (tmp_path / "cover_letter.md").write_text("same content\n", encoding="utf-8")
+        (tmp_path / "cover_letter-filled.md").write_text("same content\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["diff-filled", "--draft-dir", str(tmp_path)])
+
+        assert result.exit_code == 0, result.stdout
+        text = (tmp_path / "cover_letter_filled_diff.md").read_text()
+        assert "No differences" in text
+
+    def test_missing_filled_counterpart_is_skipped_not_errored(self, tmp_path: Path):
+        (tmp_path / "resume.md").write_text("draft only, no filled copy yet\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["diff-filled", "--draft-dir", str(tmp_path)])
+
+        assert result.exit_code == 0, result.stdout
+        assert not (tmp_path / "resume_filled_diff.md").exists()
+        assert "Skipped resume.md" in result.stderr
+
+    def test_no_files_at_all_errors(self, tmp_path: Path):
+        result = runner.invoke(app, ["diff-filled", "--draft-dir", str(tmp_path)])
+        assert result.exit_code == 1
+
+    def test_rerun_overwrites_diff_file(self, tmp_path: Path):
+        (tmp_path / "resume.md").write_text("v1\n", encoding="utf-8")
+        (tmp_path / "resume-filled.md").write_text("v1 edited\n", encoding="utf-8")
+        runner.invoke(app, ["diff-filled", "--draft-dir", str(tmp_path)])
+
+        (tmp_path / "resume-filled.md").write_text("v2 edited differently\n", encoding="utf-8")
+        result = runner.invoke(app, ["diff-filled", "--draft-dir", str(tmp_path)])
+
+        assert result.exit_code == 0, result.stdout
+        text = (tmp_path / "resume_filled_diff.md").read_text()
+        assert "v2 edited differently" in text
+        assert "v1 edited" not in text  # stale content from the first diff run isn't just appended
 
 
 class TestMatchAndDraftCmd:

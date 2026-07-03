@@ -48,6 +48,12 @@ class JobPosting(BaseModel):
     company: str | None = None
     role_title: str | None = None
     url: str | None = Field(default=None, description="The original posting's apply/listing URL, if known.")
+    ghost_score: float | None = Field(
+        default=None, description="job-radar's ghost-risk score for this posting (0-1), if known."
+    )
+    ghost_reasons: list[str] = Field(
+        default_factory=list, description="job-radar's ghost-risk reasons for this posting, if known."
+    )
     fetched_at: datetime = Field(default_factory=datetime.now)
 
 

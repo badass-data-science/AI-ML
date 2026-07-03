@@ -3,7 +3,7 @@
 Usage:
     python -m job_hunt_agent.cli load-vault
     python -m job_hunt_agent.cli match --posting posting.txt --company Acme --role "Data Scientist"
-    python -m job_hunt_agent.cli match --posting posting.txt --company Acme --role "Data Scientist" --url "https://..."
+    python -m job_hunt_agent.cli match --posting posting.txt --company Acme --role "Data Scientist" --url "https://..." --ghost-score 0.35 --ghost-reasons "posted 113 days ago (>90d)"
     python -m job_hunt_agent.cli draft --match output/matches/acme-data-scientist-2026-01-01/match.json
     python -m job_hunt_agent.cli init-filled --draft-dir output/drafts/acme-data-scientist-2026-01-01
 
@@ -21,6 +21,7 @@ want to record that by hand.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import os
 import sys
 from datetime import datetime
@@ -32,6 +33,7 @@ from job_hunt_agent.core.assembler import assemble_draft_cover_letter, assemble_
 from job_hunt_agent.core.llm_client import LLMClient
 from job_hunt_agent.core.matcher import score_job
 from job_hunt_agent.core.models import ApplicationRecord, JobMatchResult, JobPosting
+from job_hunt_agent.core.posting_utils import extract_company_brief
 from job_hunt_agent.core.tracker import ApplicationStore
 from job_hunt_agent.core.tracing import generate_run_id, setup_tracing
 from job_hunt_agent.core.vault_reader import load_vault
@@ -122,6 +124,31 @@ def load_vault_cmd(
         typer.echo("\nNo warnings.")
 
 
+@app.command("company-brief")
+def company_brief_cmd(
+    posting: str = typer.Option(
+        ..., "--posting", help="Path to a job posting text file, or '-' to read from stdin"
+    ),
+) -> None:
+    """Best-effort extraction of a posting's "About <Company>" blurb.
+
+    A convenience for writing the company-specific paragraph — that
+    paragraph must always be written fresh (per the vault's own rules,
+    see CoverLetters/INDEX.md), this command doesn't write anything, it
+    just saves re-reading the whole raw posting to find the mission
+    language to write from. Not authoritative: always sanity-check
+    against the real posting.
+    """
+    posting_text = _read_posting_text(posting)
+    brief = extract_company_brief(posting_text)
+    if brief is None:
+        typer.echo(
+            "Couldn't find an 'About <Company>' section or any substantial paragraph.", err=True
+        )
+        raise typer.Exit(code=1)
+    typer.echo(brief)
+
+
 @app.command("match")
 def match_cmd(
     posting: str = typer.Option(
@@ -130,6 +157,12 @@ def match_cmd(
     company: str | None = typer.Option(None, "--company"),
     role: str | None = typer.Option(None, "--role"),
     url: str | None = typer.Option(None, "--url", help="The posting's apply/listing URL, if known — carried into the saved match.json and both drafts' metadata comment."),
+    ghost_score: float | None = typer.Option(
+        None, "--ghost-score", help="job-radar's ghost-risk score for this posting (0-1), if known — carried into the saved match.json and both drafts' metadata comment."
+    ),
+    ghost_reasons: str | None = typer.Option(
+        None, "--ghost-reasons", help="job-radar's ghost-risk reasons, semicolon-separated, if known."
+    ),
     model: str = typer.Option(_DEFAULT_MODEL, "--model", envvar="LLM_MODEL"),
     vault_path: Path = typer.Option(
         _DEFAULT_VAULT_PATH, "--vault-path", envvar="JOB_HUNT_AGENT_VAULT_PATH"
@@ -138,7 +171,14 @@ def match_cmd(
 ) -> None:
     """Score a job posting against the vault; writes output/matches/{slug}/match.json."""
     posting_text = _read_posting_text(posting)
-    job = JobPosting(raw_text=posting_text, company=company, role_title=role, url=url)
+    job = JobPosting(
+        raw_text=posting_text,
+        company=company,
+        role_title=role,
+        url=url,
+        ghost_score=ghost_score,
+        ghost_reasons=[r.strip() for r in ghost_reasons.split(";") if r.strip()] if ghost_reasons else [],
+    )
     result = asyncio.run(_run_match(job, model, vault_path))
 
     slug = slugify(company or "unknown", role or "role", datetime.now().strftime("%Y-%m-%d"))
@@ -253,6 +293,70 @@ def init_filled_cmd(
         typer.echo(f"Already exists, left untouched (use --force to overwrite): {t}")
 
 
+# Deliberately not "<stem>-filled-diff.md" to match resume-filled.md's own
+# naming — these are a distinct artifact (a diff, not a draft), so a visually
+# distinct underscore convention keeps the two from being confused at a glance.
+_DIFF_FILENAMES = {
+    "resume.md": "resume_filled_diff.md",
+    "cover_letter.md": "cover_letter_filled_diff.md",
+}
+
+
+def _write_diff(source: Path, filled: Path, out_path: Path) -> bool:
+    """Write a unified diff from source -> filled at out_path. Returns False
+    (writes nothing) if either file is missing — there's nothing to diff."""
+    if not source.is_file() or not filled.is_file():
+        return False
+    source_lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    filled_lines = filled.read_text(encoding="utf-8").splitlines(keepends=True)
+    diff_lines = list(
+        difflib.unified_diff(source_lines, filled_lines, fromfile=source.name, tofile=filled.name)
+    )
+    if diff_lines:
+        body = f"# Diff: {source.name} → {filled.name}\n\n```diff\n{''.join(diff_lines)}```\n"
+    else:
+        body = f"# Diff: {source.name} → {filled.name}\n\nNo differences — {filled.name} is identical to {source.name}.\n"
+    out_path.write_text(body, encoding="utf-8")
+    return True
+
+
+@app.command("diff-filled")
+def diff_filled_cmd(
+    draft_dir: Path = typer.Option(
+        ..., "--draft-dir", help="A draft directory containing resume.md/resume-filled.md and/or cover_letter.md/cover_letter-filled.md"
+    ),
+) -> None:
+    """Write resume_filled_diff.md / cover_letter_filled_diff.md showing exactly
+    what the human-review pass changed, for each pair that exists.
+
+    This is what "diff resume.md against resume-filled.md" from the README
+    actually means made concrete — a thin wrapper over difflib, not new
+    judgment. Skips (with a note) any pair where either half doesn't exist
+    yet; always overwrites its own output, since a diff file is disposable
+    and regenerating it is cheap.
+    """
+    if not any((draft_dir / base_name).is_file() for base_name in _DIFF_FILENAMES):
+        typer.echo(f"No resume.md or cover_letter.md found under {draft_dir}", err=True)
+        raise typer.Exit(code=1)
+
+    written: list[Path] = []
+    skipped: list[str] = []
+    for base_name, diff_name in _DIFF_FILENAMES.items():
+        source = draft_dir / base_name
+        filled = draft_dir / f"{source.stem}-filled{source.suffix}"
+        out_path = draft_dir / diff_name
+        if _write_diff(source, filled, out_path):
+            written.append(out_path)
+        else:
+            skipped.append(base_name)
+
+    for w in written:
+        typer.echo(f"Written: {w}")
+    for s in skipped:
+        stem = Path(s).stem
+        typer.echo(f"Skipped {s}: needs both {s} and {stem}-filled.md to exist first", err=True)
+
+
 @app.command("match-and-draft")
 def match_and_draft_cmd(
     posting: str = typer.Option(
@@ -261,6 +365,12 @@ def match_and_draft_cmd(
     company: str | None = typer.Option(None, "--company"),
     role: str | None = typer.Option(None, "--role"),
     url: str | None = typer.Option(None, "--url", help="The posting's apply/listing URL, if known — carried into the saved match.json and both drafts' metadata comment."),
+    ghost_score: float | None = typer.Option(
+        None, "--ghost-score", help="job-radar's ghost-risk score for this posting (0-1), if known — carried into the saved match.json and both drafts' metadata comment."
+    ),
+    ghost_reasons: str | None = typer.Option(
+        None, "--ghost-reasons", help="job-radar's ghost-risk reasons, semicolon-separated, if known."
+    ),
     model: str = typer.Option(_DEFAULT_MODEL, "--model", envvar="LLM_MODEL"),
     register: str | None = typer.Option(None, "--register", help="Override the recommended register"),
     vault_path: Path = typer.Option(
@@ -275,7 +385,14 @@ def match_and_draft_cmd(
 ) -> None:
     """Convenience: chain match + draft in one invocation — the common real-world path."""
     posting_text = _read_posting_text(posting)
-    job = JobPosting(raw_text=posting_text, company=company, role_title=role, url=url)
+    job = JobPosting(
+        raw_text=posting_text,
+        company=company,
+        role_title=role,
+        url=url,
+        ghost_score=ghost_score,
+        ghost_reasons=[r.strip() for r in ghost_reasons.split(";") if r.strip()] if ghost_reasons else [],
+    )
     result = asyncio.run(_run_match(job, model, vault_path))
     _print_match_summary(result)
 

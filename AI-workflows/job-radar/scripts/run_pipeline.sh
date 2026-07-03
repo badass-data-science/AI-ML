@@ -85,8 +85,11 @@ printf '%s\n' "$TXT_PATHS" | while IFS= read -r txt_path; do
     company=$("$JOB_RADAR_PY" -c "import json,sys; print(json.load(open(sys.argv[1]))['posting']['company'])" "$json_path")
     role=$("$JOB_RADAR_PY" -c "import json,sys; print(json.load(open(sys.argv[1]))['posting']['title'])" "$json_path")
     url=$("$JOB_RADAR_PY" -c "import json,sys; print(json.load(open(sys.argv[1]))['posting']['url'])" "$json_path")
+    ghost_score=$("$JOB_RADAR_PY" -c "import json,sys; print(json.load(open(sys.argv[1]))['ghost']['score'])" "$json_path")
+    ghost_reasons=$("$JOB_RADAR_PY" -c "import json,sys; print('; '.join(json.load(open(sys.argv[1]))['ghost']['reasons']))" "$json_path")
     echo
     echo "--- $company: $role ---"
     ( cd "$JOB_HUNT_AGENT_DIR" && "$JOB_HUNT_AGENT_PY" -m job_hunt_agent.cli match-and-draft \
-        --posting "$txt_path" --company "$company" --role "$role" --url "$url" )
+        --posting "$txt_path" --company "$company" --role "$role" --url "$url" \
+        --ghost-score "$ghost_score" --ghost-reasons "$ghost_reasons" )
 done

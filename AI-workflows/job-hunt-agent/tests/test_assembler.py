@@ -187,6 +187,32 @@ class TestAssembleDraftResume:
         surfaced_section = text.split("Surfaced skills not yet in this resume")[1].split("##")[0]
         assert "SQL" not in surfaced_section
 
+    def test_surfaced_skill_matching_an_existing_acronym_is_dropped(
+        self, loaded_vault, sample_job_posting, sample_llm_output, tmp_path
+    ):
+        # Regression test: the literal word-boundary check alone doesn't
+        # catch a surfaced skill that's the *expansion* of an abbreviation
+        # already listed. The fixture vault's ai-engineering variant lists
+        # "LLM Observability" in its Skills line — "LLM" is present, but the
+        # spelled-out "Large Language Models" is not, and the old dedup
+        # check would have surfaced it as new despite being the same skill.
+        from job_hunt_agent.core.models import SurfacedSkill
+
+        sample_llm_output.surfaced_skills = [
+            SurfacedSkill(
+                file_title="AI Skills", keyword="Large Language Models", why_relevant="duplicate claim"
+            ),
+            SurfacedSkill(
+                file_title="AI Skills", keyword="Vector Databases", why_relevant="genuinely unused"
+            ),
+        ]
+        match = JobMatchResult(job=sample_job_posting, llm_output=sample_llm_output)
+        draft = assemble_draft_resume(match, loaded_vault, tmp_path, variant_override="ai-engineering")
+        text = draft.output_path.read_text()
+        assert "Vector Databases" in text
+        surfaced_section = text.split("Surfaced skills not yet in this resume")[1].split("##")[0]
+        assert "Large Language Models" not in surfaced_section
+
     def test_projects_only_included_for_variant_with_selected_projects(
         self, loaded_vault, match_result, tmp_path
     ):
@@ -215,9 +241,20 @@ class TestAssembleDraftResume:
         draft = assemble_draft_resume(match, loaded_vault, tmp_path)
         assert "Source posting: https://acme.com/careers/123" in draft.output_path.read_text()
 
-    def test_no_source_url_line_when_absent(self, loaded_vault, match_result, tmp_path):
+    def test_ghost_score_included_in_metadata_comment_when_present(
+        self, loaded_vault, sample_job_posting, sample_llm_output, tmp_path
+    ):
+        job = sample_job_posting.model_copy(
+            update={"ghost_score": 0.35, "ghost_reasons": ["posted 113 days ago (>90d)"]}
+        )
+        match = JobMatchResult(job=job, llm_output=sample_llm_output)
+        draft = assemble_draft_resume(match, loaded_vault, tmp_path)
+        text = draft.output_path.read_text()
+        assert "Ghost risk: 0.35 (posted 113 days ago (>90d))" in text
+
+    def test_no_ghost_risk_line_when_absent(self, loaded_vault, match_result, tmp_path):
         draft = assemble_draft_resume(match_result, loaded_vault, tmp_path)
-        assert "Source posting:" not in draft.output_path.read_text()
+        assert "Ghost risk:" not in draft.output_path.read_text()
 
 
 class TestAssembleDraftCoverLetter:
@@ -292,9 +329,20 @@ class TestAssembleDraftCoverLetter:
         draft = assemble_draft_cover_letter(match, loaded_vault, tmp_path)
         assert "Source posting: https://acme.com/careers/123" in draft.output_path.read_text()
 
-    def test_no_source_url_line_when_absent(self, loaded_vault, match_result, tmp_path):
+    def test_ghost_score_included_in_metadata_comment_when_present(
+        self, loaded_vault, sample_job_posting, sample_llm_output, tmp_path
+    ):
+        job = sample_job_posting.model_copy(
+            update={"ghost_score": 0.35, "ghost_reasons": ["posted 113 days ago (>90d)"]}
+        )
+        match = JobMatchResult(job=job, llm_output=sample_llm_output)
+        draft = assemble_draft_cover_letter(match, loaded_vault, tmp_path)
+        text = draft.output_path.read_text()
+        assert "Ghost risk: 0.35 (posted 113 days ago (>90d))" in text
+
+    def test_no_ghost_risk_line_when_absent(self, loaded_vault, match_result, tmp_path):
         draft = assemble_draft_cover_letter(match_result, loaded_vault, tmp_path)
-        assert "Source posting:" not in draft.output_path.read_text()
+        assert "Ghost risk:" not in draft.output_path.read_text()
 
 
 class TestNoInternalReasoningLeaksIntoDrafts:

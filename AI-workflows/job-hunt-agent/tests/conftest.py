@@ -100,7 +100,7 @@ An AI engineer with test agentic pipeline experience.
 
 ## Skills
 
-**AI Engineering:** litellm | instructor | Pydantic
+**AI Engineering:** litellm | instructor | Pydantic | LLM Observability
 
 ## Experience
 

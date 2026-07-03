@@ -81,7 +81,10 @@ content that's never made it into any resume. The matching prompt is built
 specifically to surface that unused content when it's relevant to a posting,
 not just to re-confirm what's already in the recommended variant. Surfaced
 content is always marked `<!-- NEW: surfaced by matcher... -->` in a draft
-resume — never silently indistinguishable from vetted content.
+resume — never silently indistinguishable from vetted content. The dedup
+check also catches an acronym/expansion pair when only one form is already
+present ("LLM" already listed means "Large Language Models" is the same
+real duplicate, not new) — see `_already_present()` in `assembler.py`.
 
 ### Guardrails run on every assembled draft
 
@@ -132,9 +135,22 @@ closing-line specifics — has to be written fresh, per the vault's own
 rules, and there was nowhere safe to put it without risking it being
 clobbered by a later re-draft. `init-filled` creates `resume-filled.md`/
 `cover_letter-filled.md` as copies, never overwriting an existing one
-without `--force`; `match-and-draft` calls it automatically. Diffing
-`resume.md` against `resume-filled.md` shows exactly what changed for a
-given application.
+without `--force`; `match-and-draft` calls it automatically. `diff-filled`
+writes `resume_filled_diff.md`/`cover_letter_filled_diff.md` — a real
+unified diff, not just a suggestion to run one by hand — showing exactly
+what a given human-review pass changed.
+
+### Convenience commands that inform the human pass, never write it
+
+`--ghost-score`/`--ghost-reasons` (job-radar's ghost-risk score, if you have
+it) carries the same way `--url` does — into `match.json` and both drafts'
+metadata comment, so you see the risk signal before investing editing time,
+not after. `company-brief` does a best-effort extraction of a posting's
+"About &lt;Company&gt;" blurb to save re-reading the whole raw posting when
+writing the company-specific paragraph. Neither one writes anything into a
+draft — the company-specific paragraph and closing line still have to be
+written fresh, per the vault's own rules; these just put the raw material
+for that writing one command away instead of a full re-read.
 
 ### No job-board scraping in v1
 
@@ -170,8 +186,16 @@ pip install -r requirements.txt   # or: uv pip install -r requirements.txt
 # sanity-check the vault parser
 python -m job_hunt_agent.cli load-vault
 
+# find the "About <Company>" blurb, to speed up writing the
+# company-specific paragraph (never auto-writes it — see Design decisions)
+python -m job_hunt_agent.cli company-brief --posting posting.txt
+
 # score a posting against the vault
 python -m job_hunt_agent.cli match --posting posting.txt --company Acme --role "Data Scientist"
+
+# ...with job-radar's ghost-risk score carried along too, if you have it
+python -m job_hunt_agent.cli match --posting posting.txt --company Acme --role "Data Scientist" \
+    --ghost-score 0.35 --ghost-reasons "posted 113 days ago (>90d)"
 
 # assemble a draft resume + cover letter from that match
 python -m job_hunt_agent.cli draft --match output/matches/acme-data-scientist-<date>/match.json
@@ -184,6 +208,9 @@ python -m job_hunt_agent.cli match-and-draft --posting posting.txt --company Acm
 # re-create the *-filled.md copies standalone (e.g. after manually deleting
 # one, or with --force to intentionally reset one back to the pristine draft)
 python -m job_hunt_agent.cli init-filled --draft-dir output/drafts/acme-data-scientist-<date>
+
+# see exactly what your human-review pass changed
+python -m job_hunt_agent.cli diff-filled --draft-dir output/drafts/acme-data-scientist-<date>
 
 # track what you actually send
 python -m job_hunt_agent.cli track add --company Acme --role "Data Scientist" \
@@ -228,7 +255,7 @@ logic.
 pytest tests/
 ```
 
-122 tests, all against a synthetic fixture vault built fresh under `tmp_path`
+138 tests, all against a synthetic fixture vault built fresh under `tmp_path`
 in `tests/conftest.py` — no test ever touches the real `vault-Resume`.
 `asyncio_mode = auto` (pytest.ini), same as `strategic-reports`.
 
@@ -237,7 +264,7 @@ in `tests/conftest.py` — no test ever touches the real `vault-Resume`.
 ```
 job-hunt-agent/
 ├── job_hunt_agent/
-│   ├── cli.py                  <- Typer CLI: load-vault, match, draft, init-filled, match-and-draft, track *
+│   ├── cli.py                  <- Typer CLI: load-vault, company-brief, match, draft, init-filled, diff-filled, match-and-draft, track *
 │   └── core/
 │       ├── llm_client.py       <- litellm + instructor client (ported from strategic-reports)
 │       ├── tracing.py          <- Langfuse/Phoenix setup (ported from strategic-reports)
@@ -248,17 +275,19 @@ job-hunt-agent/
 │       ├── matcher.py          <- deterministic prefilter + score_job()
 │       ├── assembler.py        <- deterministic draft resume/cover-letter assembly
 │       ├── guardrails.py       <- forbidden-term / excluded-skill scanning
+│       ├── posting_utils.py    <- best-effort "About <Company>" extraction from raw posting text
 │       └── tracker.py          <- ApplicationStore, flat-JSON backed
 │   └── templates/               <- Jinja2 templates for the two draft documents
-├── tests/                       <- 122 tests, fixture-vault-only, no real-vault or real-LLM calls
+├── tests/                       <- 138 tests, fixture-vault-only, no real-vault or real-LLM calls
 └── output/                      <- gitignored; matches/, drafts/, tracker/ generated at runtime
 ```
 
 ## Output
 
 - `output/matches/{slug}/match.json` — the full `JobMatchResult` from a `match` run, re-loadable by `draft`.
-- `output/drafts/{slug}/resume.md`, `cover_letter.md` — assembled drafts, always marked as needing human review. Pristine, reproducible output of `draft` — safe to regenerate any time the match or the code changes, since nothing gets hand-edited into these directly.
-- `output/drafts/{slug}/resume-filled.md`, `cover_letter-filled.md` — editable copies of the above, created automatically by `match-and-draft` (or explicitly via `init-filled`). This is where the actual human-review pass happens (surfaced-content integration, the company-specific paragraph, closing-line specifics), so re-running `draft`/`match-and-draft` never clobbers that work. Diffing `resume.md` against `resume-filled.md` shows exactly what changed for a given application.
+- `output/drafts/{slug}/resume.md`, `cover_letter.md` — assembled drafts, always marked as needing human review. Pristine, reproducible output of `draft` — safe to regenerate any time the match or the code changes, since nothing gets hand-edited into these directly. If job-radar's ghost-risk score was passed in (`--ghost-score`/`--ghost-reasons`), it's in the metadata comment alongside the source URL.
+- `output/drafts/{slug}/resume-filled.md`, `cover_letter-filled.md` — editable copies of the above, created automatically by `match-and-draft` (or explicitly via `init-filled`). This is where the actual human-review pass happens (surfaced-content integration, the company-specific paragraph, closing-line specifics), so re-running `draft`/`match-and-draft` never clobbers that work.
+- `output/drafts/{slug}/resume_filled_diff.md`, `cover_letter_filled_diff.md` — a unified diff between each pristine draft and its `-filled.md` sibling, from `diff-filled`. Shows exactly what a given human-review pass actually changed; always safe to regenerate, since a diff is disposable.
 - `output/tracker/applications.json` — the local application tracker.
 
 None of this is committed (`output/` is gitignored) — it's real, potentially

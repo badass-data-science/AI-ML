@@ -37,6 +37,35 @@ def slugify(*parts: str) -> str:
     return slug or "untitled"
 
 
+def _acronym(phrase: str) -> str:
+    """First-letter-of-each-word acronym, e.g. "Large Language Models" -> "LLM".
+
+    Only meaningful for multi-word phrases — a single word has no acronym.
+    """
+    words = re.findall(r"[A-Za-z]+", phrase)
+    if len(words) < 2:
+        return ""
+    return "".join(w[0] for w in words).upper()
+
+
+def _already_present(keyword: str, existing_text: str) -> bool:
+    """Is `keyword` already represented in `existing_text` — either as the
+    literal phrase, or as its acronym?
+
+    Catches the case the literal word-boundary check alone misses: a surfaced
+    skill like "Large Language Models" can be a real duplicate of already-used
+    content even when only "LLM" (the abbreviation) appears in the résumé —
+    the two are the same skill, just spelled differently. Deliberately only
+    checks phrase -> acronym, not the reverse (expanding an arbitrary
+    abbreviation back out is ambiguous without a dictionary), and only for
+    multi-word phrases, where an acronym is meaningful.
+    """
+    if word_boundary_pattern(keyword).search(existing_text):
+        return True
+    acronym = _acronym(keyword)
+    return bool(acronym) and word_boundary_pattern(acronym).search(existing_text) is not None
+
+
 def _month_number(name: str | None) -> int:
     if not name:
         return 1
@@ -153,8 +182,11 @@ def assemble_draft_resume(
             # variant's own skills_section_raw renders the expanded synonym
             # ("Model Context Protocol (MCP)") alongside it. The keyword-set
             # check above misses that synonym gap; this catches it by looking
-            # at what the resume literally already says.
-            and not word_boundary_pattern(s.keyword).search(variant.skills_section_raw)
+            # at what the resume literally already says. Also checks the
+            # keyword's acronym (see _already_present) — "Large Language
+            # Models" is the same real duplicate as "LLM" already listed,
+            # just spelled out.
+            and not _already_present(s.keyword, variant.skills_section_raw)
         ]
 
     projects = (
@@ -180,6 +212,8 @@ def assemble_draft_resume(
         company=match.job.company,
         role=match.job.role_title,
         url=match.job.url,
+        ghost_score=match.job.ghost_score,
+        ghost_reasons=match.job.ghost_reasons,
         generated_at=datetime.now().isoformat(timespec="seconds"),
     )
 
@@ -239,6 +273,8 @@ def assemble_draft_cover_letter(
         company=match.job.company,
         role=match.job.role_title,
         url=match.job.url,
+        ghost_score=match.job.ghost_score,
+        ghost_reasons=match.job.ghost_reasons,
         register=register,
         salutation=salutation,
         opening_line=opening_line,
