@@ -556,6 +556,11 @@ def _load_building_blocks(path: Path, warnings: list[str]) -> list[BuildingBlock
         quoted = [ln.lstrip(">").strip() for ln in text_lines if ln.startswith(">")]
         prose = "\n".join(quoted) if quoted else " ".join(text_lines)
         needs_human_edit = "synthesized" in block.lower() and "not from a real letter" in block.lower()
+        # e.g. stakeholder-collaboration-fragment in soft-skills-and-work-ethic.md:
+        # a real block_id naming convention already distinguishes "-prose" blocks
+        # (complete, safe to render standalone) from "-fragment" blocks (a phrase
+        # meant to be worked into other prose, per that file's own usage guidance).
+        is_fragment = block_id.endswith("-fragment")
 
         # Some files (greetings.md, closings.md) name each block after its
         # register directly instead of an explicit "**Register:**" line —
@@ -571,6 +576,7 @@ def _load_building_blocks(path: Path, warnings: list[str]) -> list[BuildingBlock
                 letter_register=letter_register,
                 text=prose,
                 needs_human_edit=needs_human_edit,
+                is_fragment=is_fragment,
                 extra_fields=extra_fields,
             )
         )

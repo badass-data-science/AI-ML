@@ -212,6 +212,15 @@ class TestLoadCoverLetters:
         verbatim = next(b for b in snap.soft_skills if b.block_id == "easy-to-work-with-prose")
         assert verbatim.needs_human_edit is False
 
+    def test_fragment_suffixed_block_id_flagged_as_fragment(self, fixture_vault: Path):
+        snap = load_vault(fixture_vault)
+        fragment = next(
+            b for b in snap.soft_skills if b.block_id == "stakeholder-collaboration-fragment"
+        )
+        assert fragment.is_fragment is True
+        prose = next(b for b in snap.soft_skills if b.block_id == "easy-to-work-with-prose")
+        assert prose.is_fragment is False
+
 
 class TestExclusionRules:
     def test_excluded_aspirational_skills_found_in_notes(self, fixture_vault: Path):

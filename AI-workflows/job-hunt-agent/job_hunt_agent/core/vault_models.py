@@ -125,6 +125,12 @@ class BuildingBlock(BaseModel):
     letter_register: str | None = None
     text: str
     needs_human_edit: bool = False
+    is_fragment: bool = Field(
+        default=False,
+        description="True when block_id ends in '-fragment' — a phrase meant to be worked "
+        "into other prose (e.g. the company-specific paragraph), not rendered as a "
+        "standalone sentence on its own.",
+    )
     extra_fields: dict[str, str] = Field(default_factory=dict)
 
 

@@ -251,6 +251,26 @@ class TestAssembleDraftCoverLetter:
         text = draft.output_path.read_text()
         assert "flagged in the vault as synthesized" in text
 
+    def test_fragment_soft_skill_not_rendered_as_standalone_sentence(
+        self, loaded_vault, sample_job_posting, sample_llm_output, tmp_path
+    ):
+        # Regression test for a real bug: a "-fragment" block_id (per the
+        # vault's own naming convention and usage guidance) is a phrase meant
+        # to be worked into the company-specific paragraph, not a complete
+        # sentence — rendering it standalone produced a dangling "..." line
+        # in a real draft. It must not appear as body prose; only inside the
+        # NOTE comment telling a human to integrate it by hand.
+        sample_llm_output.recommended_soft_skill_id = "stakeholder-collaboration-fragment"
+        match = JobMatchResult(job=sample_job_posting, llm_output=sample_llm_output)
+        draft = assemble_draft_cover_letter(match, loaded_vault, tmp_path)
+        text = draft.output_path.read_text()
+
+        assert "is a fragment, not a standalone sentence" in text
+        # the fragment text must not appear as a bare, un-commented body line
+        body_lines = [ln for ln in text.splitlines() if not ln.strip().startswith("<!--")]
+        assert not any("error analysis" in ln for ln in body_lines)
+        assert any("fragment" in w for w in draft.warnings)
+
     def test_register_override_used(self, loaded_vault, match_result, tmp_path):
         draft = assemble_draft_cover_letter(match_result, loaded_vault, tmp_path, register_override="casual-direct")
         assert draft.letter_register == "casual-direct"

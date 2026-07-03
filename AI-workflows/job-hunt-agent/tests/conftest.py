@@ -384,6 +384,12 @@ A test voice example.
 **Register:** formal-professional
 
 > ⚠️ synthesized, not from a real letter — review before using. Draft leadership paragraph.
+
+## stakeholder-collaboration-fragment
+
+**Register:** formal-professional
+
+> ...strong experience in error analysis, data quality, and stakeholder collaboration.
 """,
     )
 

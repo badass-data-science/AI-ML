@@ -249,6 +249,12 @@ def assemble_draft_cover_letter(
     )
 
     warnings = scan_for_violations(rendered, vault)
+    if soft_skill is not None and soft_skill.is_fragment:
+        warnings.append(
+            f"soft-skill block {soft_skill.block_id!r} is a fragment, not a standalone "
+            "sentence — work it into the company-specific paragraph by hand, see the "
+            "matching NOTE comment in the draft"
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / "cover_letter.md"

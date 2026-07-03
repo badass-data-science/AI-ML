@@ -11,9 +11,13 @@
 
 {% endfor %}
 {% if soft_skill %}
+{% if soft_skill.is_fragment %}
+<!-- NOTE: soft-skill block '{{ soft_skill.block_id }}' is a fragment, not a standalone sentence — work it into the company-specific paragraph above by hand, per the vault's own usage guidance. Fragment text: "{{ soft_skill.text }}" -->
+{% else %}
 {{ soft_skill.text }}
 {% if soft_skill.needs_human_edit %}
 <!-- NOTE: this soft-skill block is flagged in the vault as synthesized, not from a real letter — review before using. -->
+{% endif %}
 {% endif %}
 {% endif %}
 
