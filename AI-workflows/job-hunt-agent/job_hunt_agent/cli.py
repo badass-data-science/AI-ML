@@ -3,6 +3,7 @@
 Usage:
     python -m job_hunt_agent.cli load-vault
     python -m job_hunt_agent.cli match --posting posting.txt --company Acme --role "Data Scientist"
+    python -m job_hunt_agent.cli match --posting posting.txt --company Acme --role "Data Scientist" --url "https://..."
     python -m job_hunt_agent.cli draft --match output/matches/acme-data-scientist-2026-01-01/match.json
     python -m job_hunt_agent.cli match-and-draft --posting posting.txt --company Acme --role "Data Scientist"
     python -m job_hunt_agent.cli track add --company Acme --role "Data Scientist" --variant data-science --register formal-professional
@@ -125,6 +126,7 @@ def match_cmd(
     ),
     company: str | None = typer.Option(None, "--company"),
     role: str | None = typer.Option(None, "--role"),
+    url: str | None = typer.Option(None, "--url", help="The posting's apply/listing URL, if known — carried into the saved match.json and both drafts' metadata comment."),
     model: str = typer.Option(_DEFAULT_MODEL, "--model", envvar="LLM_MODEL"),
     vault_path: Path = typer.Option(
         _DEFAULT_VAULT_PATH, "--vault-path", envvar="JOB_HUNT_AGENT_VAULT_PATH"
@@ -133,7 +135,7 @@ def match_cmd(
 ) -> None:
     """Score a job posting against the vault; writes output/matches/{slug}/match.json."""
     posting_text = _read_posting_text(posting)
-    job = JobPosting(raw_text=posting_text, company=company, role_title=role)
+    job = JobPosting(raw_text=posting_text, company=company, role_title=role, url=url)
     result = asyncio.run(_run_match(job, model, vault_path))
 
     slug = slugify(company or "unknown", role or "role", datetime.now().strftime("%Y-%m-%d"))
@@ -194,6 +196,7 @@ def match_and_draft_cmd(
     ),
     company: str | None = typer.Option(None, "--company"),
     role: str | None = typer.Option(None, "--role"),
+    url: str | None = typer.Option(None, "--url", help="The posting's apply/listing URL, if known — carried into the saved match.json and both drafts' metadata comment."),
     model: str = typer.Option(_DEFAULT_MODEL, "--model", envvar="LLM_MODEL"),
     register: str | None = typer.Option(None, "--register", help="Override the recommended register"),
     vault_path: Path = typer.Option(
@@ -203,7 +206,7 @@ def match_and_draft_cmd(
 ) -> None:
     """Convenience: chain match + draft in one invocation — the common real-world path."""
     posting_text = _read_posting_text(posting)
-    job = JobPosting(raw_text=posting_text, company=company, role_title=role)
+    job = JobPosting(raw_text=posting_text, company=company, role_title=role, url=url)
     result = asyncio.run(_run_match(job, model, vault_path))
     _print_match_summary(result)
 

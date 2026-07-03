@@ -47,6 +47,7 @@ class JobPosting(BaseModel):
     source_path: Path | None = None
     company: str | None = None
     role_title: str | None = None
+    url: str | None = Field(default=None, description="The original posting's apply/listing URL, if known.")
     fetched_at: datetime = Field(default_factory=datetime.now)
 
 

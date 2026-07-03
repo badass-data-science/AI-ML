@@ -136,6 +136,18 @@ class TestAssembleDraftResume:
         # text is NOT silently stripped
         assert "FDA" in draft.output_path.read_text()
 
+    def test_source_url_included_in_metadata_comment_when_present(
+        self, loaded_vault, sample_job_posting, sample_llm_output, tmp_path
+    ):
+        job = sample_job_posting.model_copy(update={"url": "https://acme.com/careers/123"})
+        match = JobMatchResult(job=job, llm_output=sample_llm_output)
+        draft = assemble_draft_resume(match, loaded_vault, tmp_path)
+        assert "Source posting: https://acme.com/careers/123" in draft.output_path.read_text()
+
+    def test_no_source_url_line_when_absent(self, loaded_vault, match_result, tmp_path):
+        draft = assemble_draft_resume(match_result, loaded_vault, tmp_path)
+        assert "Source posting:" not in draft.output_path.read_text()
+
 
 class TestAssembleDraftCoverLetter:
     def test_raises_without_llm_output(self, loaded_vault, sample_job_posting, tmp_path):
@@ -180,6 +192,18 @@ class TestAssembleDraftCoverLetter:
         draft = assemble_draft_cover_letter(match_result, loaded_vault, tmp_path)
         text = draft.output_path.read_text()
         assert "`" not in text
+
+    def test_source_url_included_in_metadata_comment_when_present(
+        self, loaded_vault, sample_job_posting, sample_llm_output, tmp_path
+    ):
+        job = sample_job_posting.model_copy(update={"url": "https://acme.com/careers/123"})
+        match = JobMatchResult(job=job, llm_output=sample_llm_output)
+        draft = assemble_draft_cover_letter(match, loaded_vault, tmp_path)
+        assert "Source posting: https://acme.com/careers/123" in draft.output_path.read_text()
+
+    def test_no_source_url_line_when_absent(self, loaded_vault, match_result, tmp_path):
+        draft = assemble_draft_cover_letter(match_result, loaded_vault, tmp_path)
+        assert "Source posting:" not in draft.output_path.read_text()
 
 
 class TestNoInternalReasoningLeaksIntoDrafts:

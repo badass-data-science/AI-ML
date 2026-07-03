@@ -122,6 +122,7 @@ def assemble_draft_resume(
         projects=projects,
         company=match.job.company,
         role=match.job.role_title,
+        url=match.job.url,
         generated_at=datetime.now().isoformat(timespec="seconds"),
     )
 
@@ -180,6 +181,7 @@ def assemble_draft_cover_letter(
     rendered = template.render(
         company=match.job.company,
         role=match.job.role_title,
+        url=match.job.url,
         register=register,
         salutation=salutation,
         opening_line=opening_line,

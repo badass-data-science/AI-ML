@@ -80,8 +80,9 @@ printf '%s\n' "$TXT_PATHS" | while IFS= read -r txt_path; do
     json_path="${txt_path%.txt}.json"
     company=$("$JOB_RADAR_PY" -c "import json,sys; print(json.load(open(sys.argv[1]))['posting']['company'])" "$json_path")
     role=$("$JOB_RADAR_PY" -c "import json,sys; print(json.load(open(sys.argv[1]))['posting']['title'])" "$json_path")
+    url=$("$JOB_RADAR_PY" -c "import json,sys; print(json.load(open(sys.argv[1]))['posting']['url'])" "$json_path")
     echo
     echo "--- $company: $role ---"
     ( cd "$JOB_HUNT_AGENT_DIR" && "$JOB_HUNT_AGENT_PY" -m job_hunt_agent.cli match-and-draft \
-        --posting "$txt_path" --company "$company" --role "$role" )
+        --posting "$txt_path" --company "$company" --role "$role" --url "$url" )
 done

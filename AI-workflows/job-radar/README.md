@@ -196,13 +196,16 @@ cd AI-workflows/job-radar
 #   /path/to/job-radar/output/postings/2026-07-02/acadia-pharmaceuticals--...txt
 #   /path/to/job-radar/output/postings/2026-07-02/fate-therapeutics--...txt
 
-# 3. Hand each one to job-hunt-agent (job-hunt-agent) — company/role come
-#    from the sibling .json file's posting.company / posting.title fields
+# 3. Hand each one to job-hunt-agent (job-hunt-agent) — company/role/url come
+#    from the sibling .json file's posting.company / posting.title / posting.url
+#    fields. --url threads the original apply link into match.json and both
+#    drafts' metadata comment, so you don't have to dig it out by hand later.
 cd ../job-hunt-agent
 .venv/bin/python -m job_hunt_agent.cli match-and-draft \
     --posting /path/to/job-radar/output/postings/2026-07-02/acadia-pharmaceuticals--....txt \
     --company "Acadia Pharmaceuticals" \
-    --role "Associate Director, AI/ML Engineering"
+    --role "Associate Director, AI/ML Engineering" \
+    --url "https://acadia.com/en-us/careers/job-board/8565787002?gh_jid=8565787002"
 ```
 
 Looping over several matched postings without the convenience script:
@@ -213,8 +216,9 @@ for txt in $(.venv/bin/python -m job_radar.cli list --location-contains Remote -
     json="${txt%.txt}.json"
     company=$(.venv/bin/python -c "import json,sys; print(json.load(open(sys.argv[1]))['posting']['company'])" "$json")
     role=$(.venv/bin/python -c "import json,sys; print(json.load(open(sys.argv[1]))['posting']['title'])" "$json")
+    url=$(.venv/bin/python -c "import json,sys; print(json.load(open(sys.argv[1]))['posting']['url'])" "$json")
     ( cd ../job-hunt-agent && .venv/bin/python -m job_hunt_agent.cli match-and-draft \
-        --posting "$txt" --company "$company" --role "$role" )
+        --posting "$txt" --company "$company" --role "$role" --url "$url" )
 done
 ```
 

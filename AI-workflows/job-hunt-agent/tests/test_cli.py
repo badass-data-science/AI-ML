@@ -59,6 +59,31 @@ class TestMatchCmd:
         saved = JobMatchResult.model_validate_json(match_files[0].read_text())
         assert saved.llm_output.recommended_variant == "data-science"
 
+    def test_url_flag_carried_into_saved_match_json(
+        self, fixture_vault: Path, sample_llm_output, tmp_path: Path
+    ):
+        posting_file = tmp_path / "posting.txt"
+        posting_file.write_text("We need a Data Scientist skilled in Python and ML.")
+
+        with patch("job_hunt_agent.cli.LLMClient", _mock_llm_client_class(sample_llm_output)):
+            result = runner.invoke(
+                app,
+                [
+                    "match",
+                    "--posting", str(posting_file),
+                    "--company", "Acme",
+                    "--role", "Data Scientist",
+                    "--url", "https://acme.com/careers/123",
+                    "--vault-path", str(fixture_vault),
+                    "--home", str(tmp_path),
+                ],
+            )
+
+        assert result.exit_code == 0, result.stdout
+        match_files = list((tmp_path / "output" / "matches").rglob("match.json"))
+        saved = JobMatchResult.model_validate_json(match_files[0].read_text())
+        assert saved.job.url == "https://acme.com/careers/123"
+
     def test_reads_posting_from_stdin(self, fixture_vault: Path, sample_llm_output, tmp_path: Path):
         with patch("job_hunt_agent.cli.LLMClient", _mock_llm_client_class(sample_llm_output)):
             result = runner.invoke(
