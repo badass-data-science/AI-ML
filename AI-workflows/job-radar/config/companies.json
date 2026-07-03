@@ -48,6 +48,54 @@
       "ats": "greenhouse",
       "slug": "freenome",
       "_note": "AI + genomics for early cancer detection — 5 of 17 current listings are remote, including a Senior Software Engineer II role."
+    },
+    {
+      "name": "Acadia Pharmaceuticals",
+      "ats": "greenhouse",
+      "slug": "acadiapharmaceuticals",
+      "_note": "San Diego-headquartered biotech — 28 of 53 current listings are in San Diego, including 'Associate Director, AI/ML Engineering' and 'Associate Director R&D AI Solutions & Analytics' — near-exact bioinformatics-ML + applied-AI fit."
+    },
+    {
+      "name": "Erasca",
+      "ats": "greenhouse",
+      "slug": "erasca",
+      "_note": "San Diego cancer biotech — 3 of 4 current listings are tagged 'San Diego, CA or remote'."
+    },
+    {
+      "name": "Veracyte",
+      "ats": "greenhouse",
+      "slug": "veracyte",
+      "_note": "Genomics diagnostics — 19 San Diego + 17 remote of 40 current listings, including a remote/SD 'Bioinformatics Research Scientist II' role."
+    },
+    {
+      "name": "Adaptive Biotechnologies",
+      "ats": "greenhouse",
+      "slug": "adaptivebiotechnologies",
+      "_note": "Immunomics/genomics — 7 of 10 current listings are remote, including 'Principal Machine Learning Scientist'."
+    },
+    {
+      "name": "PathAI",
+      "ats": "greenhouse",
+      "slug": "pathai",
+      "_note": "AI + pathology — 5 of 9 current listings are remote, several ML engineering roles."
+    },
+    {
+      "name": "LangChain",
+      "ats": "ashby",
+      "slug": "langchain",
+      "_note": "Applied AI / agentic-engineering tooling — 7 of 102 current listings are remote (several international; check for US-remote specifically)."
+    },
+    {
+      "name": "Pinecone",
+      "ats": "ashby",
+      "slug": "pinecone",
+      "_note": "Vector DB / AI infra — small board (3 listings), 2 are US-remote software engineering roles."
+    },
+    {
+      "name": "Sierra",
+      "ats": "ashby",
+      "slug": "sierra",
+      "_note": "Agentic AI (customer-facing AI agents) — 3 of 145 current listings are US-remote, currently skewed sales/GTM rather than engineering."
     }
   ]
 }
