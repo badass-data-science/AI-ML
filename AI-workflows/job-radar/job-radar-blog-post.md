@@ -62,11 +62,14 @@ _EVERGREEN_PATTERNS = [
 An LLM call here would add real latency and a real dollar cost to score something a five-line regex already catches, and — the part that actually mattered in the decision — it would make the score *less* explainable, not more. Every signal that contributes to a ghost-risk score appends a plain-English reason to the result. Nothing is a silent number:
 
 ```
-score=0.35
-reasons=["posted 275 days ago (>90d)"]
+score=0.45
+reasons=[
+    "posted 113 days ago (>90d)",
+    "description is unusually short (0 chars) — may be a placeholder listing",
+]
 ```
 
-That's an actual score from an actual pull, on a real "Software Engineer, Growth Platform" posting that has, in fact, been open at Ramp for the better part of a year. The pipeline never hides the postings it thinks are risky, either — every one gets written out; the score just lets her sort safest-first or filter with `--max-ghost-score` when she wants a shorter list. A heuristic can be wrong, so it surfaces the evidence instead of making the call unilaterally.
+That's an actual score from an actual pull, on a real "Medical Director, Autoimmunity" posting at Fate Therapeutics — open since March, and, as of this pull, carrying no actual job description text at all. Two independent signals, both true, both stated plainly. The pipeline never hides the postings it thinks are risky, either — every one gets written out; the score just lets her sort safest-first or filter with `--max-ghost-score` when she wants a shorter list. A heuristic can be wrong, so it surfaces the evidence instead of making the call unilaterally.
 
 ## Making Staleness a Verifiable Claim, Not a Guess
 
@@ -78,13 +81,13 @@ So the pipeline keeps its own memory instead. Every posting it has ever seen get
 {
   "key": "lever:fatetherapeutics:a0b82256-00da-4cd9-81b3-7c8e0df48b2a",
   "first_seen_at": "2026-07-02T19:38:29.097930",
-  "last_seen_at": "2026-07-02T19:38:29.097930",
-  "seen_count": 1,
+  "last_seen_at": "2026-07-02T20:06:42.069248",
+  "seen_count": 2,
   "last_title": "Director, Regulatory Affairs"
 }
 ```
 
-Each `pull` updates every record it touches. If a posting is still showing up across a dozen pulls spanning six weeks, that's evidence no ATS's own timestamp can fake, because it isn't the ATS's claim at all — it's a claim job-radar can independently stand behind, having actually watched. The staleness signal only gets *more* trustworthy with time, which is a strange property for a piece of software to have, and also exactly the point: this store is one-pull-in, more-confident-out, by design.
+That `seen_count: 2` and the gap between `first_seen_at` and `last_seen_at` are from two real pulls, run half an hour apart while writing this post — the smallest possible proof the mechanism works, not a hypothetical. Scale that same record out to a dozen pulls spanning six weeks and it's evidence no ATS's own timestamp can fake, because it isn't the ATS's claim at all — it's a claim job-radar can independently stand behind, having actually watched. The staleness signal only gets *more* trustworthy with time, which is a strange property for a piece of software to have, and also exactly the point: this store is one-pull-in, more-confident-out, by design.
 
 ## What Broke, and What That Taught Her
 
