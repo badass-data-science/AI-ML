@@ -15,7 +15,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from job_hunt_agent.core.guardrails import scan_for_violations
+from job_hunt_agent.core.guardrails import scan_for_violations, word_boundary_pattern
 from job_hunt_agent.core.models import DraftCoverLetter, DraftResume, JobMatchResult
 from job_hunt_agent.core.vault_models import VaultSnapshot
 
@@ -98,6 +98,14 @@ def assemble_draft_resume(
             s
             for s in match.llm_output.surfaced_skills
             if s.keyword.lower() not in already_used_keywords
+            # Ground-truth check against the actual rendered text, not just the
+            # vault's structured used_entries tags: a Skills file's "used in
+            # current resumes" line can tag an abbreviation ("MCP") while the
+            # variant's own skills_section_raw renders the expanded synonym
+            # ("Model Context Protocol (MCP)") alongside it. The keyword-set
+            # check above misses that synonym gap; this catches it by looking
+            # at what the resume literally already says.
+            and not word_boundary_pattern(s.keyword).search(variant.skills_section_raw)
         ]
 
     projects = (

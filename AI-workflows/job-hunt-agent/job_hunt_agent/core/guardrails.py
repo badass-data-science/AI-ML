@@ -14,7 +14,7 @@ import re
 from job_hunt_agent.core.vault_models import VaultSnapshot
 
 
-def _word_boundary_pattern(term: str) -> re.Pattern:
+def word_boundary_pattern(term: str) -> re.Pattern:
     # Word-boundary, case-insensitive match. Plain substring matching on a
     # short acronym like "RAG" produces false positives inside ordinary
     # words ("paragraph", "leveraging") — \b anchors prevent that while
@@ -27,14 +27,14 @@ def scan_for_violations(text: str, vault: VaultSnapshot) -> list[str]:
     violations: list[str] = []
 
     for term in vault.forbidden_terms:
-        if _word_boundary_pattern(term).search(text):
+        if word_boundary_pattern(term).search(text):
             violations.append(
                 f"forbidden term found: {term!r} — this is a standing content rule, "
                 "see Notes/career-positioning.md in the vault"
             )
 
     for skill in vault.excluded_aspirational_skills:
-        if _word_boundary_pattern(skill).search(text):
+        if word_boundary_pattern(skill).search(text):
             violations.append(
                 f"excluded aspirational skill found: {skill!r} — not yet a real, "
                 "evidenced skill, see Notes/skills-vault-status.md in the vault"

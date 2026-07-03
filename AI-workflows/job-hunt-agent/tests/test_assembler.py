@@ -116,6 +116,34 @@ class TestAssembleDraftResume:
         surfaced_section = text.split("Surfaced skills not yet in this resume")[1].split("##")[0]
         assert "Python" not in surfaced_section
 
+    def test_surfaced_skill_rendered_via_skills_section_raw_but_untracked_is_dropped(
+        self, loaded_vault, sample_job_posting, sample_llm_output, tmp_path
+    ):
+        # Regression test for a real bug: the dedup check above only looks at
+        # each Skills file's structured `used_entries` tags, not the resume's
+        # actual rendered Skills text. A vault can tag an abbreviation as used
+        # ("MCP") while the resume's skills_section_raw renders a synonym
+        # alongside it ("Model Context Protocol (MCP)") that no used_entries
+        # tag ever names — the old check missed that gap entirely. The fixture
+        # vault has the same shape: data-science's skills_section_raw is
+        # "Python | R | SQL", but neither "R" nor "SQL" is tracked in any
+        # Skills file's used_entries — so the old code would have surfaced
+        # "SQL" as unused despite it being right there in the resume already.
+        from job_hunt_agent.core.models import SurfacedSkill
+
+        sample_llm_output.surfaced_skills = [
+            SurfacedSkill(file_title="ML Skills", keyword="SQL", why_relevant="duplicate claim"),
+            SurfacedSkill(
+                file_title="ML Skills", keyword="TensorFlow", why_relevant="genuinely unused"
+            ),
+        ]
+        match = JobMatchResult(job=sample_job_posting, llm_output=sample_llm_output)
+        draft = assemble_draft_resume(match, loaded_vault, tmp_path)
+        text = draft.output_path.read_text()
+        assert "TensorFlow" in text
+        surfaced_section = text.split("Surfaced skills not yet in this resume")[1].split("##")[0]
+        assert "SQL" not in surfaced_section
+
     def test_projects_only_included_for_variant_with_selected_projects(
         self, loaded_vault, match_result, tmp_path
     ):
