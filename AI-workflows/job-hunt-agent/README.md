@@ -94,6 +94,48 @@ real bug caught during manual verification, see `tests/test_guardrails.py`).
 A hit never silently strips text — it's surfaced as a warning so a human sees
 exactly what tripped the check.
 
+### Experience renders reverse-chronologically, not alphabetically
+
+`vault_reader.py` loads `Resumes/experience/*.md` via `sorted(glob(...))` —
+alphabetical by filename, purely for deterministic iteration. `assembler.py`
+originally rendered the Experience section in that same order with no
+date-based sort on top, which happened to look almost right in the real
+vault only because the most recent employer's filename also starts with
+"A" — a real bug, caught by noticing Best Buy Health (ends 2021) rendering
+before Epic Sciences (ends 2023), which is backwards. `employer_bullets` is
+now explicitly sorted by a best-effort `(year, month)` key parsed from each
+employer's free-text `dates` field before rendering.
+
+### The vault's own naming conventions are read as structured signals, not just prose
+
+`CoverLetters/building-blocks/soft-skills-and-work-ethic.md` names its
+blocks `-prose` (complete, safe to render standalone) or `-fragment` (a
+phrase meant to be worked into other prose, per that file's own usage
+guidance) — a real, already-existing convention the code didn't act on
+until a real bug surfaced it: the LLM recommended
+`stakeholder-collaboration-fragment` as the soft skill for a real draft, and
+the template rendered its raw text as its own paragraph, producing a
+dangling "..." sentence.
+`BuildingBlock.is_fragment` (derived from the `-fragment` suffix) now
+routes those blocks to a `<!-- NOTE -->` comment plus a CLI warning instead
+of body prose, so the fragment text is preserved but never presented as
+finished.
+
+### `*-filled.md` siblings, not in-place edits, for the human-review pass
+
+`resume.md`/`cover_letter.md` are the pristine, reproducible output of
+`draft`/`match-and-draft` — meant to be safe to regenerate any time the
+match or the code changes (which happened three times in one real session
+building this project). But the actual per-application work — integrating
+surfaced skills/bullets, writing the company-specific paragraph, filling in
+closing-line specifics — has to be written fresh, per the vault's own
+rules, and there was nowhere safe to put it without risking it being
+clobbered by a later re-draft. `init-filled` creates `resume-filled.md`/
+`cover_letter-filled.md` as copies, never overwriting an existing one
+without `--force`; `match-and-draft` calls it automatically. Diffing
+`resume.md` against `resume-filled.md` shows exactly what changed for a
+given application.
+
 ### No job-board scraping in v1
 
 Input is a job posting's text — pasted, or a local file. This is
@@ -186,7 +228,7 @@ logic.
 pytest tests/
 ```
 
-120 tests, all against a synthetic fixture vault built fresh under `tmp_path`
+122 tests, all against a synthetic fixture vault built fresh under `tmp_path`
 in `tests/conftest.py` — no test ever touches the real `vault-Resume`.
 `asyncio_mode = auto` (pytest.ini), same as `strategic-reports`.
 
@@ -208,7 +250,7 @@ job-hunt-agent/
 │       ├── guardrails.py       <- forbidden-term / excluded-skill scanning
 │       └── tracker.py          <- ApplicationStore, flat-JSON backed
 │   └── templates/               <- Jinja2 templates for the two draft documents
-├── tests/                       <- 120 tests, fixture-vault-only, no real-vault or real-LLM calls
+├── tests/                       <- 122 tests, fixture-vault-only, no real-vault or real-LLM calls
 └── output/                      <- gitignored; matches/, drafts/, tracker/ generated at runtime
 ```
 
