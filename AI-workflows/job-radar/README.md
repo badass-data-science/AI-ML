@@ -246,6 +246,15 @@ you've already reviewed the list and want to automate the rest (e.g. from
 cron or another script — though see "No scheduling / no Prefect" above for
 why job-radar itself doesn't do that scheduling for you).
 
+`match-and-draft` itself does more than just write `resume.md`/
+`cover_letter.md` — by default it also creates the editable `-filled.md`
+copies to do your human-review pass into, writes a diff between each draft
+and its filled copy (trivial on a first run, genuinely useful once you've
+edited), and prints the posting's best-effort "About &lt;Company&gt;" blurb
+for writing the company-specific paragraph. See job-hunt-agent's README
+("Convenience commands that inform the human pass, never write it") for the
+`--no-*` flags if you want to skip any of that.
+
 The script is pure shell calling each project's CLI as a subprocess — it
 doesn't import either project's Python code, keeping the same independence
 the two projects have from each other.
