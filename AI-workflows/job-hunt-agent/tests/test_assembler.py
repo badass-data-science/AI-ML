@@ -5,6 +5,7 @@ import pytest
 from job_hunt_agent.core.assembler import (
     assemble_draft_cover_letter,
     assemble_draft_resume,
+    merge_surfaced_into_filled,
     slugify,
 )
 from job_hunt_agent.core.models import JobMatchResult
@@ -255,6 +256,48 @@ class TestAssembleDraftResume:
     def test_no_ghost_risk_line_when_absent(self, loaded_vault, match_result, tmp_path):
         draft = assemble_draft_resume(match_result, loaded_vault, tmp_path)
         assert "Ghost risk:" not in draft.output_path.read_text()
+
+
+class TestMergeSurfacedIntoFilled:
+    def test_noop_on_text_without_staging_sections(self):
+        text = "# Resume draft\nNothing special here.\n"
+        assert merge_surfaced_into_filled(text) == text
+
+    def test_surfaced_skill_folded_into_skills_section_and_staging_heading_removed(
+        self, loaded_vault, match_result, tmp_path
+    ):
+        draft = assemble_draft_resume(match_result, loaded_vault, tmp_path, include_surfaced=True)
+        merged = merge_surfaced_into_filled(draft.output_path.read_text())
+        assert "Surfaced skills not yet in this resume" not in merged
+        skills_section = merged.split("## Skills")[1].split("## Experience")[0]
+        assert "TensorFlow" in skills_section
+        assert "NEW: surfaced by matcher" in skills_section
+
+    def test_surfaced_bullet_folded_into_matching_employer_block(
+        self, loaded_vault, match_result, tmp_path
+    ):
+        draft = assemble_draft_resume(match_result, loaded_vault, tmp_path, include_surfaced=True)
+        merged = merge_surfaced_into_filled(draft.output_path.read_text())
+        assert "Surfaced bullets not yet in any resume variant" not in merged
+        acme_block = merged.split("Data Scientist | Acme Corp")[1].split("## Patents")[0]
+        assert "genomics data pipelines for variant calling" in acme_block
+        assert "NEW: surfaced by matcher" in acme_block
+
+    def test_surfaced_bullet_with_no_matching_employer_block_left_in_fallback_section(self):
+        text = (
+            "## Skills\n\n**Programming:** Python\n\n"
+            "## Experience\n\n"
+            "**Data Scientist | Acme Corp**\n*2020 - 2024*\n- existing bullet\n\n"
+            "### Surfaced bullets not yet in any resume variant — human review required\n\n"
+            "<!-- NEW: surfaced by matcher, not yet in any resume variant — human review required -->\n"
+            "- [Unknown Employer LLC] some new bullet\n"
+            "  - why relevant: reasons\n\n"
+            "## Patents & Publications\n\n- patent\n"
+        )
+        merged = merge_surfaced_into_filled(text)
+        assert "no matching employer block found" in merged
+        assert "Unknown Employer LLC" in merged
+        assert "existing bullet" in merged
 
 
 class TestAssembleDraftCoverLetter:

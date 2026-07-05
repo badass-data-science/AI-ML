@@ -6,14 +6,16 @@
 # (all but the last on by default, all job-hunt-agent flags -- see its
 # README for the --no-* opt-outs): creates resume-filled.md/cover_letter-
 # filled.md, the editable copies to do your actual human-review pass into
-# (re-running this script later never clobbers that work); writes
-# resume_filled_diff.md/cover_letter_filled_diff.md showing exactly what
-# you've changed so far (trivial "no differences" on a first run, real once
-# you've edited); prints the posting's best-effort "About <Company>" blurb,
-# to save re-reading the whole posting when writing the company-specific
-# paragraph; and copies the posting text itself into the same drafts
-# directory as posting.txt, no flag needed, so the original listing is one
-# file away during review instead of a re-lookup.
+# (re-running this script later never clobbers that work) -- resume-filled.md
+# already has surfaced skills/bullets folded into its main sections as a
+# starting attempt, still marked for review; writes resume_filled_diff.md/
+# cover_letter_filled_diff.md showing exactly what's changed from the
+# pristine draft (real on a first run whenever surfaced content existed to
+# fold in, not just after you've hand-edited); prints the posting's
+# best-effort "About <Company>" blurb, to save re-reading the whole posting
+# when writing the company-specific paragraph; and copies the posting text
+# itself into the same drafts directory as posting.txt, no flag needed, so
+# the original listing is one file away during review instead of a re-lookup.
 #
 # This script is pure shell orchestration over each project's own CLI --
 # job-radar and job-hunt-agent still never import each other. See each

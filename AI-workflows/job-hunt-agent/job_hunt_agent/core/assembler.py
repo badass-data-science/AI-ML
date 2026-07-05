@@ -110,6 +110,92 @@ def _first_template_option(text: str) -> str:
     return first
 
 
+_SURFACED_SKILLS_HEADING = "### Surfaced skills not yet in this resume — human review required"
+_SURFACED_BULLETS_HEADING = "### Surfaced bullets not yet in any resume variant — human review required"
+
+_SURFACED_SKILLS_SECTION_RE = re.compile(
+    re.escape(_SURFACED_SKILLS_HEADING) + r"\n\n((?:- .+\n)+)\n?"
+)
+_SURFACED_BULLETS_SECTION_RE = re.compile(
+    re.escape(_SURFACED_BULLETS_HEADING) + r"\n\n(.+?)\n(?=## )", re.DOTALL
+)
+_SURFACED_BULLET_ENTRY_RE = re.compile(
+    r"<!-- NEW: surfaced by matcher, not yet in any resume variant — human review required -->\n"
+    r"- \[(?P<employer>[^\]]+)\] (?P<text>.+)\n"
+    r"  - why relevant: (?P<why>.+)\n"
+)
+
+
+def _employer_block_re(employer: str) -> re.Pattern[str]:
+    return re.compile(
+        r"(\*\*[^\n|]+\|\s*" + re.escape(employer) + r"\*\*\n\*[^\n]*\*\n(?:- .+\n)*)"
+    )
+
+
+def merge_surfaced_into_filled(resume_text: str) -> str:
+    """Best-effort text transform from a rendered resume.md into the seed
+    content for its resume-filled.md sibling.
+
+    resume.md deliberately keeps surfaced skills/bullets in their own "not
+    yet in this resume"/"not yet in any resume variant" staging sections
+    (see assemble_draft_resume) so nothing surfaced ever looks pre-vetted.
+    The actual human-review pass — folding worthwhile surfaced content into
+    the main Skills/Experience sections — happens in resume-filled.md (see
+    cli.py's init_filled_cmd). This does that folding mechanically as a
+    starting point: surfaced skills move directly under the Skills section,
+    surfaced bullets move into their matching employer's block in
+    Experience — each still wrapped in the same "NEW: surfaced by matcher"
+    comment, so diff-filled and a human review pass still see exactly what
+    was auto-added and can drop or edit anything that doesn't hold up.
+
+    A no-op on any text without a matching staging section — safe to call
+    on text that was never rendered by assemble_draft_resume.
+    """
+    text = resume_text
+
+    def _skills_repl(match: re.Match[str]) -> str:
+        items = match.group(1).strip("\n").splitlines()
+        marked = "".join(
+            f"<!-- NEW: surfaced by matcher, not yet vetted — human review required -->\n{line}\n"
+            for line in items
+        )
+        return marked + "\n"
+
+    text = _SURFACED_SKILLS_SECTION_RE.sub(_skills_repl, text)
+
+    bullets_match = _SURFACED_BULLETS_SECTION_RE.search(text)
+    if bullets_match is not None:
+        unplaced: list[re.Match[str]] = []
+        for entry in _SURFACED_BULLET_ENTRY_RE.finditer(bullets_match.group(1)):
+            block_match = _employer_block_re(entry.group("employer")).search(text)
+            if block_match is None:
+                unplaced.append(entry)
+                continue
+            addition = (
+                f"- {entry.group('text')}\n"
+                f"  <!-- NEW: surfaced by matcher, not yet vetted — "
+                f"why relevant: {entry.group('why')} -->\n"
+            )
+            text = (
+                text[: block_match.end(1)] + addition + text[block_match.end(1) :]
+            )
+
+        if unplaced:
+            leftover = "".join(
+                "<!-- NEW: surfaced by matcher, no matching employer block found in this "
+                "variant — human review required -->\n"
+                f"- [{e.group('employer')}] {e.group('text')}\n"
+                f"  - why relevant: {e.group('why')}\n"
+                for e in unplaced
+            )
+            replacement = _SURFACED_BULLETS_HEADING + "\n\n" + leftover + "\n"
+        else:
+            replacement = ""
+        text = _SURFACED_BULLETS_SECTION_RE.sub(lambda _m: replacement, text, count=1)
+
+    return text
+
+
 def assemble_draft_resume(
     match: JobMatchResult,
     vault: VaultSnapshot,

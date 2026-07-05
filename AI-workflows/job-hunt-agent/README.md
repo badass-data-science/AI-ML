@@ -321,7 +321,7 @@ job-hunt-agent/
 - `output/matches/{slug}/match.json` — the full `JobMatchResult` from a `match` run, re-loadable by `draft`.
 - `output/drafts/{slug}/resume.md`, `cover_letter.md` — assembled drafts, always marked as needing human review. Pristine, reproducible output of `draft` — safe to regenerate any time the match or the code changes, since nothing gets hand-edited into these directly. If job-radar's ghost-risk score was passed in (`--ghost-score`/`--ghost-reasons`), it's in the metadata comment alongside the source URL.
 - `output/drafts/{slug}/posting.txt` — a copy of the exact posting text the drafts were built from, written automatically by both `draft` and `match-and-draft`. No flag to skip it — it's a plain copy, not a generated artifact, so there's no meaningful "no" to opt into. Keeps the posting one file away during the human-review pass instead of a re-lookup of wherever the original `--posting` path (or the match.json it came from) happened to point.
-- `output/drafts/{slug}/resume-filled.md`, `cover_letter-filled.md` — editable copies of the above, created automatically by `match-and-draft` (or explicitly via `init-filled`). This is where the actual human-review pass happens (surfaced-content integration, the company-specific paragraph, closing-line specifics), so re-running `draft`/`match-and-draft` never clobbers that work.
+- `output/drafts/{slug}/resume-filled.md`, `cover_letter-filled.md` — editable copies of the above, created automatically by `match-and-draft` (or explicitly via `init-filled`). This is where the actual human-review pass happens (the company-specific paragraph, closing-line specifics), so re-running `draft`/`match-and-draft` never clobbers that work. `resume-filled.md` isn't a byte-identical copy: surfaced skills/bullets are already folded into the main Skills/Experience sections as a starting attempt (still marked `NEW: surfaced by matcher`), so you're reviewing and trimming rather than copy-pasting from a separate staging section — see the next two FAQ entries.
 - `output/drafts/{slug}/resume_filled_diff.md`, `cover_letter_filled_diff.md` — a unified diff between each pristine draft and its `-filled.md` sibling, from `diff-filled`. Shows exactly what a given human-review pass actually changed; always safe to regenerate, since a diff is disposable.
 - `output/drafts/{slug}/*.docx` — a Word version of whichever markdown file you point `to-docx` at, same stem, written next to it. Not created automatically by anything — a deliberate last step run by hand once editing is actually done.
 - `output/tracker/applications.json` — the local application tracker.
@@ -358,10 +358,13 @@ Working through it, item by item:
    near-duplicates worded differently — e.g. "Large Language Models"
    surfacing as new when the summary already says "LLM." Worth a quick
    manual scan.
-4. **If you keep one, move it — don't leave it in the surfaced section.**
-   Fold it into the main Skills list wherever it fits, then delete it from
-   "Surfaced skills." That section is a staging area, not somewhere content
-   should live in a resume you actually send.
+4. **In `resume-filled.md`, this is already folded into the Skills section
+   for you** (see `merge_surfaced_into_filled` in `assembler.py`) — still
+   wrapped in a `NEW: surfaced by matcher` comment so it's obvious at a
+   glance during review. If it doesn't hold up, delete the marked line; if
+   it does, just drop the comment. (`resume.md` itself is unchanged — it
+   still keeps surfaced content in the separate staging section described
+   above, since it stays the pristine, reproducible output of `draft`.)
 5. **Ignore the `(keyword) (file_title)` double-labeling if it looks
    redundant.** Known cosmetic quirk — the model sometimes fills
    `file_title` with the keyword itself instead of the real vault filename.
@@ -392,3 +395,12 @@ already in the Experience section above it, trust that instinct and check
 by hand — the same "ground truth from the vault, not from the LLM's claim"
 principle applies, but it only works where the vault actually records the
 relationship.
+
+Same auto-fold as surfaced skills applies here too: in `resume-filled.md`,
+a surfaced bullet is already spliced into its matching employer's block
+(matched on the vault's own `employer` field, not free-text guessing),
+marked with the same `NEW: surfaced by matcher` comment. If no employer
+block matches (should be rare — it means the bullet's `employer` field
+doesn't line up with any heading in the recommended variant), it's left in
+a fallback "no matching employer block found" section instead of being
+silently dropped, so you still see it during review.

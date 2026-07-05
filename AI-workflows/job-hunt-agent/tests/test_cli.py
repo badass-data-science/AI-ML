@@ -257,6 +257,27 @@ class TestInitFilledCmd:
         result = runner.invoke(app, ["init-filled", "--draft-dir", str(tmp_path)])
         assert result.exit_code == 1
 
+    def test_resume_filled_folds_in_surfaced_content_cover_letter_stays_verbatim(
+        self, fixture_vault: Path, sample_job_posting, sample_llm_output, tmp_path: Path
+    ):
+        from job_hunt_agent.core.assembler import assemble_draft_resume
+        from job_hunt_agent.core.models import JobMatchResult
+        from job_hunt_agent.core.vault_reader import load_vault
+
+        vault = load_vault(fixture_vault)
+        match = JobMatchResult(job=sample_job_posting, llm_output=sample_llm_output)
+        draft_dir = tmp_path / "draft-out"
+        assemble_draft_resume(match, vault, draft_dir, include_surfaced=True)
+        (draft_dir / "cover_letter.md").write_text("Dear Hiring Manager,", encoding="utf-8")
+
+        result = runner.invoke(app, ["init-filled", "--draft-dir", str(draft_dir)])
+
+        assert result.exit_code == 0, result.stdout
+        filled = (draft_dir / "resume-filled.md").read_text()
+        assert "Surfaced skills not yet in this resume" not in filled
+        assert "NEW: surfaced by matcher" in filled
+        assert (draft_dir / "cover_letter-filled.md").read_text() == "Dear Hiring Manager,"
+
 
 class TestDiffFilledCmd:
     def test_writes_diff_showing_added_and_removed_lines(self, tmp_path: Path):

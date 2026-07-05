@@ -36,7 +36,12 @@ from pathlib import Path
 
 import typer
 
-from job_hunt_agent.core.assembler import assemble_draft_cover_letter, assemble_draft_resume, slugify
+from job_hunt_agent.core.assembler import (
+    assemble_draft_cover_letter,
+    assemble_draft_resume,
+    merge_surfaced_into_filled,
+    slugify,
+)
 from job_hunt_agent.core.llm_client import LLMClient
 from job_hunt_agent.core.matcher import score_job
 from job_hunt_agent.core.models import ApplicationRecord, JobMatchResult, JobPosting
@@ -261,6 +266,14 @@ def _init_filled_files(draft_dir: Path, force: bool) -> tuple[list[Path], list[P
     unless force=True — this is what keeps a hand-review pass safe across a
     later re-draft, whether that re-draft is invoked explicitly (`draft`) or
     implicitly (`match-and-draft` run again for the same slug).
+
+    resume-filled.md's seed content isn't a byte-identical copy of
+    resume.md: surfaced skills/bullets are folded into the main Skills/
+    Experience sections first (see merge_surfaced_into_filled) as a starting
+    attempt at the human-review pass, still marked "NEW: surfaced by
+    matcher" so diff-filled shows exactly what was auto-added. No such
+    surfaced-content staging exists for cover_letter.md, so it's still
+    copied verbatim.
     """
     created: list[Path] = []
     skipped: list[Path] = []
@@ -272,7 +285,9 @@ def _init_filled_files(draft_dir: Path, force: bool) -> tuple[list[Path], list[P
         if target.exists() and not force:
             skipped.append(target)
             continue
-        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        source_text = source.read_text(encoding="utf-8")
+        seed_text = merge_surfaced_into_filled(source_text) if base_name == "resume.md" else source_text
+        target.write_text(seed_text, encoding="utf-8")
         created.append(target)
     return created, skipped
 
@@ -291,13 +306,17 @@ def init_filled_cmd(
     resume.md and cover_letter.md stay the pristine, reproducible output of
     `draft` — always safe to re-run when the match or the code changes,
     since nothing gets hand-edited into them directly. The *-filled.md
-    siblings are where the actual human-review pass happens: integrating
-    worthwhile surfaced skills/bullets into the main sections, writing the
-    company-specific paragraph, filling in closing-line specifics — content
-    that, per the vault's own rules, must always be written fresh rather
-    than templated. Re-running `draft` never clobbers that work, and you can
-    diff draft vs. filled to see exactly what changed for a given
-    application, which is the point when doing this across many postings.
+    siblings are where the actual human-review pass happens: writing the
+    company-specific paragraph and closing-line specifics, which, per the
+    vault's own rules, must always be written fresh rather than templated.
+    Surfaced skills/bullets are already folded into the main Skills/
+    Experience sections of resume-filled.md as a starting attempt (see
+    merge_surfaced_into_filled in assembler.py) — still marked "NEW:
+    surfaced by matcher" for review, since that content still needs a human
+    to vet it, just not to relocate it by hand. Re-running `draft` never
+    clobbers any of this work, and you can diff draft vs. filled to see
+    exactly what changed for a given application, which is the point when
+    doing this across many postings.
 
     `match-and-draft` calls this automatically (pass --no-init-filled to
     skip); this command is for running it standalone against an existing
