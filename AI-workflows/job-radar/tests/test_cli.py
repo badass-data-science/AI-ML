@@ -168,6 +168,55 @@ class TestListCmd:
         assert "Remote Role" in result.stdout
         assert "Onsite Role" not in result.stdout
 
+    def test_location_contains_remote_excludes_non_us_remote(self, tmp_path: Path):
+        companies_path = _write_companies_config(tmp_path)
+        us_remote = make_posting(external_id="1", title="US Remote Role", location="Remote - US")
+        intl_remote = make_posting(external_id="2", title="Intl Remote Role", location="Remote - Australia")
+        mixed_remote = make_posting(
+            external_id="3",
+            title="Mixed Remote Role",
+            location="London, UK; Remote-Friendly, United States; San Francisco, CA",
+        )
+        bare_remote = make_posting(external_id="4", title="Bare Remote Role", location="Remote")
+
+        with patch(
+            "job_radar.core.source.FETCHERS",
+            {"greenhouse": AsyncMock(return_value=[us_remote, intl_remote, mixed_remote, bare_remote])},
+        ):
+            runner.invoke(
+                app,
+                [
+                    "pull",
+                    "--companies-path", str(companies_path),
+                    "--seen-store-path", str(tmp_path / "seen_store.json"),
+                    "--home", str(tmp_path),
+                ],
+            )
+
+        result = runner.invoke(app, ["list", "--home", str(tmp_path), "--location-contains", "remote"])
+        assert "US Remote Role" in result.stdout
+        assert "Mixed Remote Role" in result.stdout
+        assert "Bare Remote Role" in result.stdout
+        assert "Intl Remote Role" not in result.stdout
+
+    def test_location_contains_non_remote_term_does_not_apply_us_filter(self, tmp_path: Path):
+        companies_path = _write_companies_config(tmp_path)
+        posting = make_posting(external_id="1", title="Austin Role", location="Austin, TX")
+
+        with patch("job_radar.core.source.FETCHERS", {"greenhouse": AsyncMock(return_value=[posting])}):
+            runner.invoke(
+                app,
+                [
+                    "pull",
+                    "--companies-path", str(companies_path),
+                    "--seen-store-path", str(tmp_path / "seen_store.json"),
+                    "--home", str(tmp_path),
+                ],
+            )
+
+        result = runner.invoke(app, ["list", "--home", str(tmp_path), "--location-contains", "austin"])
+        assert "Austin Role" in result.stdout
+
 
 class TestShowCmd:
     def test_shows_full_detail(self, tmp_path: Path):

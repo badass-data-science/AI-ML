@@ -38,6 +38,50 @@ from job_radar.core.source import load_companies, pull_postings
 
 app = typer.Typer(add_completion=False, help="Pull job postings from ATS APIs and score them for ghost-job risk.")
 
+_US_STATES = {
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut",
+    "delaware", "florida", "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa",
+    "kansas", "kentucky", "louisiana", "maine", "maryland", "massachusetts", "michigan",
+    "minnesota", "mississippi", "missouri", "montana", "nebraska", "nevada",
+    "new hampshire", "new jersey", "new mexico", "new york", "north carolina",
+    "north dakota", "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island",
+    "south carolina", "south dakota", "tennessee", "texas", "utah", "vermont",
+    "virginia", "washington", "west virginia", "wisconsin", "wyoming",
+}
+_US_MARKERS = {"united states", "usa", "us"} | _US_STATES
+# Not exhaustive — covers the countries that actually show up on Greenhouse/
+# Lever/Ashby boards as an explicit non-US remote option. Ambiguous names that
+# collide with US states/cities (e.g. "Georgia") are deliberately left out;
+# false negatives here just mean an international posting slips through, which
+# a human still filters out at review time, vs. false-positives hiding a real
+# US posting.
+_NON_US_REMOTE_MARKERS = {
+    "canada", "mexico", "brazil", "argentina", "chile", "colombia", "peru", "uruguay",
+    "costa rica", "panama", "uk", "united kingdom", "ireland", "france", "germany",
+    "spain", "italy", "portugal", "netherlands", "poland", "sweden", "switzerland",
+    "austria", "belgium", "denmark", "norway", "finland", "romania", "ukraine",
+    "greece", "czech republic", "hungary", "australia", "new zealand", "japan",
+    "china", "hong kong", "singapore", "india", "philippines", "indonesia",
+    "malaysia", "thailand", "vietnam", "korea", "taiwan", "israel",
+    "united arab emirates", "south africa", "nigeria", "kenya", "egypt", "turkey",
+    "europe", "emea", "apac", "latam",
+}
+
+
+def _is_us_remote(location: str) -> bool:
+    """Whether a 'remote' location string reads as US-based remote.
+
+    ATS location fields are free text with no separate country field, and
+    often list several offices/regions in one string (e.g. "London, UK;
+    Remote-Friendly, United States; San Francisco, CA") — so this only
+    excludes a posting when it names a non-US region *and* names no US one;
+    a mixed listing that includes a US remote option still passes.
+    """
+    loc = location.lower()
+    has_us_marker = any(re.search(rf"\b{re.escape(m)}\b", loc) for m in _US_MARKERS)
+    has_non_us_marker = any(re.search(rf"\b{re.escape(m)}\b", loc) for m in _NON_US_REMOTE_MARKERS)
+    return has_us_marker or not has_non_us_marker
+
 _DEFAULT_HOME = Path(os.environ.get("JOB_RADAR_HOME", Path.cwd()))
 _DEFAULT_COMPANIES_PATH = Path(
     os.environ.get("JOB_RADAR_COMPANIES_PATH", str(_DEFAULT_HOME / "config" / "companies.json"))
@@ -100,7 +144,9 @@ def list_cmd(
         "--location-contains",
         help="Case-insensitive substring match against the posting location, e.g. 'Remote' or a city name. "
         "Matches whatever string the ATS itself reports — wording varies by company (some tag a posting "
-        "'Remote', others 'Remote - US', others just a city with no remote tag at all), so try a few terms.",
+        "'Remote', others 'Remote - US', others just a city with no remote tag at all), so try a few terms. "
+        "When the term itself contains 'remote', results are further limited to US-remote postings — "
+        "international-only remote listings (e.g. 'Remote - Australia', 'France (Remote)') are excluded.",
     ),
     paths: bool = typer.Option(
         False,
@@ -131,6 +177,8 @@ def list_cmd(
             for p, r in entries
             if r.posting.location is not None and location_contains.lower() in r.posting.location.lower()
         ]
+        if "remote" in location_contains.lower():
+            entries = [(p, r) for p, r in entries if _is_us_remote(r.posting.location)]
     if max_ghost_score is not None:
         entries = [(p, r) for p, r in entries if r.ghost.score <= max_ghost_score]
 
