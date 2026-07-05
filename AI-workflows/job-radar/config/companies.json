@@ -1,29 +1,29 @@
 {
-  "_comment": "Starter list, curated 2026-07-02 for San Diego / remote + Emily's bioinformatics-ML and applied-AI career lanes. Every slug below was verified live via curl against the real ATS API before being added here (not guessed) — see project_job_radar memory. Add/remove freely; use `python -m job_radar.cli list --location-contains 'San Diego'` or `--location-contains Remote` after a pull to see what each company actually has open right now, since listings change.",
+  "_comment": "Starter list, curated 2026-07-02 for San Diego / remote + Emily's bioinformatics-ML and applied-AI career lanes. Every slug below was verified live via curl against the real ATS API before being added here (not guessed) \u2014 see project_job_radar memory. Add/remove freely; use `python -m job_radar.cli list --location-contains 'San Diego'` or `--location-contains Remote` after a pull to see what each company actually has open right now, since listings change.",
   "companies": [
     {
       "name": "Fate Therapeutics",
       "ats": "lever",
       "slug": "fatetherapeutics",
-      "_note": "San Diego-headquartered cell therapy/genomics biotech — all current listings are in San Diego, CA."
+      "_note": "San Diego-headquartered cell therapy/genomics biotech \u2014 all current listings are in San Diego, CA."
     },
     {
       "name": "insitro",
       "ats": "ashby",
       "slug": "insitro",
-      "_note": "AI-driven drug discovery (ML + computational biology) — South San Francisco, worth checking for remote roles."
+      "_note": "AI-driven drug discovery (ML + computational biology) \u2014 South San Francisco, worth checking for remote roles."
     },
     {
       "name": "Benchling",
       "ats": "ashby",
       "slug": "benchling",
-      "_note": "Biotech R&D software platform — multiple offices (SF, Boston, Zurich, London), worth checking for remote roles."
+      "_note": "Biotech R&D software platform \u2014 multiple offices (SF, Boston, Zurich, London), worth checking for remote roles."
     },
     {
       "name": "Anthropic",
       "ats": "greenhouse",
       "slug": "anthropic",
-      "_note": "Applied AI / agentic engineering lane — has 'Remote-Friendly, United States' roles alongside SF/NYC."
+      "_note": "Applied AI / agentic engineering lane \u2014 has 'Remote-Friendly, United States' roles alongside SF/NYC."
     },
     {
       "name": "Scale AI",
@@ -35,67 +35,77 @@
       "name": "10x Genomics",
       "ats": "greenhouse",
       "slug": "10xgenomics",
-      "_note": "Genomics instrumentation/software — 7 of 28 current listings are US-remote."
+      "_note": "Genomics instrumentation/software \u2014 7 of 28 current listings are US-remote."
     },
     {
       "name": "Natera",
       "ats": "greenhouse",
       "slug": "natera",
-      "_note": "Genomics/diagnostics — 59 of 188 current listings are US-remote, strong bioinformatics-adjacent fit."
+      "_note": "Genomics/diagnostics \u2014 59 of 188 current listings are US-remote, strong bioinformatics-adjacent fit."
     },
     {
       "name": "Freenome",
       "ats": "greenhouse",
       "slug": "freenome",
-      "_note": "AI + genomics for early cancer detection — 5 of 17 current listings are remote, including a Senior Software Engineer II role."
+      "_note": "AI + genomics for early cancer detection \u2014 5 of 17 current listings are remote, including a Senior Software Engineer II role."
     },
     {
       "name": "Acadia Pharmaceuticals",
       "ats": "greenhouse",
       "slug": "acadiapharmaceuticals",
-      "_note": "San Diego-headquartered biotech — 28 of 53 current listings are in San Diego, including 'Associate Director, AI/ML Engineering' and 'Associate Director R&D AI Solutions & Analytics' — near-exact bioinformatics-ML + applied-AI fit."
+      "_note": "San Diego-headquartered biotech \u2014 28 of 53 current listings are in San Diego, including 'Associate Director, AI/ML Engineering' and 'Associate Director R&D AI Solutions & Analytics' \u2014 near-exact bioinformatics-ML + applied-AI fit."
     },
     {
       "name": "Erasca",
       "ats": "greenhouse",
       "slug": "erasca",
-      "_note": "San Diego cancer biotech — 3 of 4 current listings are tagged 'San Diego, CA or remote'."
+      "_note": "San Diego cancer biotech \u2014 3 of 4 current listings are tagged 'San Diego, CA or remote'."
     },
     {
       "name": "Veracyte",
       "ats": "greenhouse",
       "slug": "veracyte",
-      "_note": "Genomics diagnostics — 19 San Diego + 17 remote of 40 current listings, including a remote/SD 'Bioinformatics Research Scientist II' role."
+      "_note": "Genomics diagnostics \u2014 19 San Diego + 17 remote of 40 current listings, including a remote/SD 'Bioinformatics Research Scientist II' role."
     },
     {
       "name": "Adaptive Biotechnologies",
       "ats": "greenhouse",
       "slug": "adaptivebiotechnologies",
-      "_note": "Immunomics/genomics — 7 of 10 current listings are remote, including 'Principal Machine Learning Scientist'."
+      "_note": "Immunomics/genomics \u2014 7 of 10 current listings are remote, including 'Principal Machine Learning Scientist'."
     },
     {
       "name": "PathAI",
       "ats": "greenhouse",
       "slug": "pathai",
-      "_note": "AI + pathology — 5 of 9 current listings are remote, several ML engineering roles."
+      "_note": "AI + pathology \u2014 5 of 9 current listings are remote, several ML engineering roles."
     },
     {
       "name": "LangChain",
       "ats": "ashby",
       "slug": "langchain",
-      "_note": "Applied AI / agentic-engineering tooling — 7 of 102 current listings are remote (several international; check for US-remote specifically)."
+      "_note": "Applied AI / agentic-engineering tooling \u2014 7 of 102 current listings are remote (several international; check for US-remote specifically)."
     },
     {
       "name": "Pinecone",
       "ats": "ashby",
       "slug": "pinecone",
-      "_note": "Vector DB / AI infra — small board (3 listings), 2 are US-remote software engineering roles."
+      "_note": "Vector DB / AI infra \u2014 small board (3 listings), 2 are US-remote software engineering roles."
     },
     {
       "name": "Sierra",
       "ats": "ashby",
       "slug": "sierra",
-      "_note": "Agentic AI (customer-facing AI agents) — 3 of 145 current listings are US-remote, currently skewed sales/GTM rather than engineering."
+      "_note": "Agentic AI (customer-facing AI agents) \u2014 3 of 145 current listings are US-remote, currently skewed sales/GTM rather than engineering."
+    },
+    {
+      "name": "Sunrise Systems",
+      "ats": "greenhouse",
+      "slug": "sunrise"
+    },
+    {
+      "name": "Sunrise Systems",
+      "ats": "ashby",
+      "slug": "sunrise"
     }
   ]
 }
