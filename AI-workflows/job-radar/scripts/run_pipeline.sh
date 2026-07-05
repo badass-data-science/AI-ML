@@ -20,6 +20,13 @@
 # project's README.md for one-time setup (venv + pip install + env vars)
 # before running this.
 #
+# Before calling match-and-draft for a posting, this script checks whether
+# output/matches/{company-role-date}/match.json already exists in
+# job-hunt-agent and skips that posting if so -- re-running this script
+# (broader filters, a second pass the same day, etc.) never re-issues a
+# real LLM call for a company/role already matched today. Delete that
+# match.json by hand first if you actually want to re-match.
+#
 # Usage:
 #   scripts/run_pipeline.sh [--title-contains TEXT] [--location-contains TEXT] \
 #                            [--company NAME] [--max-ghost-score FLOAT] [--yes]
@@ -97,6 +104,25 @@ printf '%s\n' "$TXT_PATHS" | while IFS= read -r txt_path; do
     ghost_reasons=$("$JOB_RADAR_PY" -c "import json,sys; print('; '.join(json.load(open(sys.argv[1]))['ghost']['reasons']))" "$json_path")
     echo
     echo "--- $company: $role ---"
+
+    # match-and-draft always overwrites match.json for the day's slug, so
+    # re-running this script (e.g. with broader filters, or just twice in
+    # one day) would otherwise re-issue a real LLM call for a company/role
+    # already matched today. Skip it instead — delete the slug's match.json
+    # by hand first if you actually want to re-match.
+    slug=$("$JOB_HUNT_AGENT_PY" -c "
+import sys
+sys.path.insert(0, '$JOB_HUNT_AGENT_DIR')
+from datetime import datetime
+from job_hunt_agent.core.assembler import slugify
+print(slugify(sys.argv[1], sys.argv[2], datetime.now().strftime('%Y-%m-%d')))
+" "$company" "$role")
+    existing_match="$JOB_HUNT_AGENT_DIR/output/matches/$slug/match.json"
+    if [ -f "$existing_match" ]; then
+        echo "Already matched today ($existing_match exists) — skipping to avoid a duplicate LLM call."
+        continue
+    fi
+
     ( cd "$JOB_HUNT_AGENT_DIR" && "$JOB_HUNT_AGENT_PY" -m job_hunt_agent.cli match-and-draft \
         --posting "$txt_path" --company "$company" --role "$role" --url "$url" \
         --ghost-score "$ghost_score" --ghost-reasons "$ghost_reasons" )
