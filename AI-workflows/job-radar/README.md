@@ -344,6 +344,15 @@ string the ATS itself reports for that posting — wording varies by company
 no remote tag at all), so it's worth trying a few terms rather than assuming
 one canonical spelling.
 
+When your `--location-contains` term itself contains "remote" (matched
+case-insensitively, so `Remote`/`remote`/`REMOTE` all count), results are
+further limited to US-remote postings: any posting whose location names a
+non-US country/region and no US one (`"Remote - Australia"`,
+`"France (Remote)"`, `"Canada - Remote"`) is excluded. A posting that lists
+several regions, including a US-remote option, still passes (e.g.
+`"London, UK; Remote-Friendly, United States; San Francisco, CA"`) — only
+listings that are exclusively non-US get dropped.
+
 ## Running the tests
 
 ```bash
