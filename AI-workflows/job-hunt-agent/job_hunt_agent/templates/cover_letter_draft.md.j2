@@ -1,0 +1,24 @@
+<!-- Draft cover letter assembled by job-hunt-agent for {{ company or "?" }} / {{ role or "?" }} on {{ generated_at }}. Register: {{ register }}. Human review required before use.{% if url %} Source posting: {{ url }}{% endif %}{% if ghost_score is not none %} Ghost risk: {{ "%.2f"|format(ghost_score) }}{% if ghost_reasons %} ({{ ghost_reasons | join('; ') }}){% endif %}{% endif %} -->
+
+{{ salutation }}
+
+{{ opening_line }}
+
+[[WRITE COMPANY-SPECIFIC PARAGRAPH HERE — this paragraph structurally cannot be sourced from the vault library and must always be written fresh, per CoverLetters/INDEX.md]]
+
+{% for p in achievement_paragraphs %}
+{{ p.text }}
+
+{% endfor %}
+{% if soft_skill %}
+{% if soft_skill.is_fragment %}
+<!-- NOTE: soft-skill block '{{ soft_skill.block_id }}' is a fragment, not a standalone sentence — work it into the company-specific paragraph above by hand, per the vault's own usage guidance. Fragment text: "{{ soft_skill.text }}" -->
+{% else %}
+{{ soft_skill.text }}
+{% if soft_skill.needs_human_edit %}
+<!-- NOTE: this soft-skill block is flagged in the vault as synthesized, not from a real letter — review before using. -->
+{% endif %}
+{% endif %}
+{% endif %}
+
+{{ closing_text }}

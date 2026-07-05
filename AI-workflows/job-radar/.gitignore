@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Output (generated at runtime)
+output/
+
+# Environment
+.env
+.venv/
+*.egg-info/
+dist/
+build/

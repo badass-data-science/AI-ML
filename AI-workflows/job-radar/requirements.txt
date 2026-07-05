@@ -1,0 +1,23 @@
+# --- HTTP ---
+httpx>=0.28.0             # async HTTP client for ATS JSON APIs
+
+# --- Data models ---
+pydantic>=2.0.0
+
+# --- Content cleanup ---
+html-to-markdown>=1.0.0   # HTML job-description fields -> clean plain text
+
+# --- Observability ---
+structlog>=26.0.0         # structured logging
+
+# --- CLI ---
+typer>=0.16.0
+
+# --- Testing ---
+pytest>=9.0.0
+pytest-asyncio>=1.0.0
+
+# No litellm / instructor / tenacity / prefect here on purpose — job-radar
+# makes no LLM calls and runs on-demand, not on a schedule. See README.md
+# "Design decisions" for why, and job-hunt-agent/strategic-reports for the
+# sibling projects that do need them.

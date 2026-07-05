@@ -1,0 +1,69 @@
+<!-- Draft resume assembled by job-hunt-agent for {{ company or "?" }} / {{ role or "?" }} on {{ generated_at }}. Human review required before use — this is a draft, not a finished resume.{% if url %} Source posting: {{ url }}{% endif %}{% if ghost_score is not none %} Ghost risk: {{ "%.2f"|format(ghost_score) }}{% if ghost_reasons %} ({{ ghost_reasons | join('; ') }}){% endif %}{% endif %} -->
+
+# {{ variant.subtitle }}
+
+## Professional Summary
+
+{{ variant.summary_text }}
+
+## Skills
+
+{{ variant.skills_section_raw }}
+{% if surfaced_skills %}
+
+### Surfaced skills not yet in this resume — human review required
+
+{% for s in surfaced_skills %}
+- {{ s.keyword }} ({{ s.file_title }}) — {{ s.why_relevant }}
+{% endfor %}
+{% endif %}
+{% if projects %}
+
+## Selected Projects
+
+{% for p in projects %}
+### {{ p.title or p.entry_id }}
+{% if p.dates %}
+*{{ p.dates }}*
+{% endif %}
+{% for line in p.text.split('\n') %}
+- {{ line }}
+{% endfor %}
+
+{% endfor %}
+{% endif %}
+
+## Experience
+
+{% for block in employer_bullets %}
+**{{ block.employer.title }} | {{ block.employer.employer }}**
+*{{ block.employer.dates }}*
+{% for b in block.bullets %}
+- {{ b.text }}
+{% endfor %}
+
+{% endfor %}
+{% if surfaced_bullets %}
+### Surfaced bullets not yet in any resume variant — human review required
+
+{% for sb in surfaced_bullets %}
+<!-- NEW: surfaced by matcher, not yet in any resume variant — human review required -->
+- [{{ sb.bullet.employer }}] {{ sb.bullet.text }}
+  - why relevant: {{ sb.why_relevant }}
+{% endfor %}
+{% endif %}
+
+## Patents & Publications
+
+{% for p in patents %}
+{% for line in p.text.split('\n') %}
+- {{ line }}
+{% endfor %}
+{% endfor %}
+
+## Education
+
+{% for e in education %}
+{{ e.text }}
+
+{% endfor %}
