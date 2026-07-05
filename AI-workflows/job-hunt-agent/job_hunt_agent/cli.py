@@ -55,7 +55,7 @@ _DEFAULT_VAULT_PATH = Path(
         "JOB_HUNT_AGENT_VAULT_PATH", str(Path.home() / "Desktop" / "vaults" / "vault-Resume")
     )
 )
-_DEFAULT_MODEL = os.environ.get("LLM_MODEL", "ollama_chat/llama3.1:70b")
+_DEFAULT_MODEL = os.environ.get("LLM_MODEL", "ollama_chat/glm-5.2:cloud")
 _DEFAULT_TRACKER_PATH = Path(
     os.environ.get(
         "JOB_HUNT_AGENT_TRACKER_PATH", str(_DEFAULT_HOME / "output" / "tracker" / "applications.json")

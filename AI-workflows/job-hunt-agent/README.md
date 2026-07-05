@@ -267,7 +267,7 @@ environment variable.
 
 | Env var | Purpose | Default |
 |---|---|---|
-| `LLM_MODEL` | litellm model string | `ollama_chat/llama3.1:70b` |
+| `LLM_MODEL` | litellm model string | `ollama_chat/glm-5.2:cloud` |
 | `JOB_HUNT_AGENT_VAULT_PATH` | Path to `vault-Resume/` | `~/Desktop/vaults/vault-Resume` |
 | `JOB_HUNT_AGENT_HOME` | Project root (for `output/`) | current directory |
 | `JOB_HUNT_AGENT_TRACKER_PATH` | Path to the tracker JSON file | `$JOB_HUNT_AGENT_HOME/output/tracker/applications.json` |
