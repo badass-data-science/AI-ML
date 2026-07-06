@@ -263,6 +263,12 @@ Two window types, chosen via `--window`:
   cost of assuming older data is still as relevant as recent data — a stronger
   stationarity assumption.
 
+Every fold's boundaries are purge-gap aware, same as the single split: `--purge-bars`
+defaults to `max(feature.n_back, feature.lookahead)` from `params.yaml` (overridable),
+purging that many bars on both sides of each fold's train/val and val/test boundary so
+no fold's window or label overlaps an adjacent split — see the purge-gap note under
+Configuration above for why.
+
 This is a **robustness diagnostic only** — it doesn't change what gets deployed. Each
 fold trains and logs to its own MLflow experiment (`<experiment>-rolling-cv`), tagged
 with its fold index and window type, and is never registered in the model registry.
@@ -295,11 +301,16 @@ uv run pytest -v -m integration         # real InfluxDB integration tests (needs
 ```
 
 The unit suite covers feature engineering (Spark, against synthetic candles), the
-time-based split/normalize/discretize logic (pure pandas, no Spark needed), model
-construction, and one true end-to-end smoke test: synthetic tensors → 1-epoch fit
-using the *real* validation split → held-out test evaluation → MLflow run assertion.
-That last test is what would have caught the original bug where the precomputed
-validation set was silently discarded in favor of `validation_split=`.
+time-based split/normalize/discretize logic including rolling-fold boundary math
+(pure pandas, no Spark needed), model construction, and one true end-to-end smoke
+test: synthetic tensors → 1-epoch fit using the *real* validation split → held-out
+test evaluation → MLflow run assertion. That last test is what would have caught the
+original bug where the precomputed validation set was silently discarded in favor of
+`validation_split=`. It also covers every evaluation/diagnostics module — baselines,
+class balance, ACF/PACF, ADF/KPSS stationarity, multiple-comparisons BH-FDR
+correction, and rolling CV — each with at least one real end-to-end test (real
+Spark-engineered Stage-1 output and/or a real local MLflow store), not just
+unit tests against hand-built arrays.
 
 `tests/test_influx_integration.py` is a second tier: it spins up a real InfluxDB 2.x
 container via Docker, seeds it with synthetic "forward-filled candlestick" rows using
