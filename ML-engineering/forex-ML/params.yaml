@@ -1,0 +1,79 @@
+# Single source of truth for the forex-ML pipeline.
+# Read and validated by forex_ml.config.load_params(); also read directly by
+# dvc.yaml so pipeline cache-invalidation and application config never drift apart.
+
+feature:
+  # Defaults mirror forex.eda.eda_config.instrument_list / granularity_list; override
+  # per-invocation via CLI flags rather than editing this list for a one-off run.
+  instruments:
+    - AUD/USD
+    - EUR/USD
+    - GBP/USD
+    - NZD/USD
+    - USD/CAD
+    - USD/CHF
+    - USD/JPY
+  granularities:
+    - H1
+    - M15
+  n_back: 200
+  lookahead: 4
+  ma_lookback_list: [12, 30, 50]
+  columns_base: [mid_open, mid_high, mid_low, mid_close, spread_close, volume]
+  ma_columns_list: [volatility, return, diff_spread_close, diff_volume]
+  training_and_testing: true
+  min_training_timestamp: "2015-01-01T00:00:00"
+  output_dir: output
+
+split:
+  column_y: pd_lead
+  class_cutoff_percentiles: [33.333333, 66.666667]
+  columns_x: [volatility, return, diff_spread_close, diff_volume, day_sin, day_cos]
+  train_val_proportion: [0.7, 0.15]
+
+# Cross product of feature.instruments x feature.granularities, spelled out because
+# DVC's `foreach` takes a single list, not a cross-product of two lists. `key` is the
+# slash-free form of `instrument` used in output filenames (see forex_ml/paths.py);
+# n_back/lookahead are deliberately NOT duplicated here — dvc.yaml interpolates those
+# straight from `feature.n_back` / `feature.lookahead` below so there's still exactly
+# one place that sets them. If you add/remove an instrument or granularity above,
+# update this list to match.
+pairs:
+  - {instrument: AUD/USD, key: AUD_USD, granularity: H1}
+  - {instrument: AUD/USD, key: AUD_USD, granularity: M15}
+  - {instrument: EUR/USD, key: EUR_USD, granularity: H1}
+  - {instrument: EUR/USD, key: EUR_USD, granularity: M15}
+  - {instrument: GBP/USD, key: GBP_USD, granularity: H1}
+  - {instrument: GBP/USD, key: GBP_USD, granularity: M15}
+  - {instrument: NZD/USD, key: NZD_USD, granularity: H1}
+  - {instrument: NZD/USD, key: NZD_USD, granularity: M15}
+  - {instrument: USD/CAD, key: USD_CAD, granularity: H1}
+  - {instrument: USD/CAD, key: USD_CAD, granularity: M15}
+  - {instrument: USD/CHF, key: USD_CHF, granularity: H1}
+  - {instrument: USD/CHF, key: USD_CHF, granularity: M15}
+  - {instrument: USD/JPY, key: USD_JPY, granularity: H1}
+  - {instrument: USD/JPY, key: USD_JPY, granularity: M15}
+
+train:
+  number_of_cells_per_rnn_layer: [300, 300, 300, 300, 300]
+  number_of_cells_per_dense_layer: [7]
+  lstm_activation_function: relu
+  dense_activation_function: relu
+  final_dense_activation_function: softmax
+  epochs: 50
+  batch_size: 16
+  learning_rate: 0.0001
+  loss_function: categorical_crossentropy
+  metrics: [accuracy]
+  l1_regularization_constant: 0.0001
+  l2_regularization_constant: 0.0001
+  batch_normalization_momentum: 0.9
+  dense_dropout_rate: 0.4
+  rnn_dropout_rate: 0.4
+  rnn_recurrent_dropout_rate: 0.4
+  reduce_lr_on_plateau_factor: 0.9
+  reduce_lr_on_plateau_patience: 3
+  early_stopping_patience: 8
+  tensorflow_seed: 54
+  mlflow_experiment_name: forex-lstm
+  mlflow_tracking_uri: "sqlite:///mlflow.db"
