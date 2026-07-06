@@ -57,6 +57,8 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
 
     test_results = train_and_evaluate(splits, params, "EUR/USD", "H1", tmp_path)
     assert "loss" in test_results
+    assert "baseline_majority_accuracy" in test_results
+    assert "baseline_persistence_accuracy" in test_results
 
     client = mlflow.tracking.MlflowClient(tracking_uri=params.mlflow_tracking_uri)
     experiment = client.get_experiment_by_name("test-experiment")
@@ -68,6 +70,8 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
     run = runs[0]
     assert "test_loss" in run.data.metrics
     assert "val_loss" in run.data.metrics  # proves validation_data was actually used
+    assert "baseline_majority_test_accuracy" in run.data.metrics
+    assert "baseline_persistence_test_accuracy" in run.data.metrics
     assert run.data.params["instrument"] == "EUR/USD"
     assert run.data.params["granularity"] == "H1"
 

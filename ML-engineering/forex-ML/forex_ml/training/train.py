@@ -24,6 +24,7 @@ from tensorflow.random import set_seed
 
 from forex_ml.config import TrainParams, load_params
 from forex_ml.data.splitting import Splits
+from forex_ml.evaluation.baselines import majority_class_baseline, persistence_baseline
 from forex_ml.paths import pair_key, splits_npz_path
 from forex_ml.training.model import build_lstm_regressor, compile_model, configure_gpu_memory_growth
 
@@ -105,6 +106,19 @@ def train_and_evaluate(
 
         test_results = model.evaluate(splits.test["M"], splits.test["y"], return_dict=True)
         mlflow.log_metrics({f"test_{k}": v for k, v in test_results.items()})
+
+        # Baselines, logged alongside the LSTM's own test metrics so they're directly
+        # comparable in the MLflow UI without cross-referencing separate runs. Neither
+        # baseline uses the model or X — if test_accuracy doesn't clear these, the
+        # LSTM isn't adding value over a trivial rule.
+        majority_result = majority_class_baseline(splits.train["y"], splits.test["y"])
+        persistence_result = persistence_baseline(splits.test["y"])
+        test_results["baseline_majority_accuracy"] = majority_result["accuracy"]
+        test_results["baseline_persistence_accuracy"] = persistence_result["accuracy"]
+        mlflow.log_metrics({
+            "baseline_majority_test_accuracy": majority_result["accuracy"],
+            "baseline_persistence_test_accuracy": persistence_result["accuracy"],
+        })
 
         mlflow.keras.log_model(model, name="model", registered_model_name=params.mlflow_experiment_name)
 

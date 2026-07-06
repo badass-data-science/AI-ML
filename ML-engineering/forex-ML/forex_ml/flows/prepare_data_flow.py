@@ -58,13 +58,20 @@ def engineer_and_save_task(spark: SparkSession, pdf, instrument: str, granularit
         .orderBy(*columns_sort)
         .repartition("instrument", "granularity")
     )
+    # is_forward_filled is populated by forex-etl's ForwardFillInator, but historical
+    # data written before that field existed won't have it — carry it through as an
+    # available (not mandatory) feature when present, rather than requiring it.
+    optional_columns = []
+    if "is_forward_filled" in df.columns:
+        optional_columns.append(F.col("is_forward_filled").cast("double").alias("is_forward_filled"))
+
     # Insurance: the Flux query already filtered to this pair, but re-filter in case
     # the underlying measurement ever contains overlapping data.
     df = (
         df
         .where(F.col("instrument") == instrument)
         .where(F.col("granularity") == granularity)
-        .select(*columns_sort, *params.columns_base)
+        .select(*columns_sort, *params.columns_base, *optional_columns)
     )
 
     df_time_series, df_non_time_series, columns_x = engineer_features(

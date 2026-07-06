@@ -8,6 +8,19 @@ InfluxDB ──▶ prepare (feature engineering) ──▶ split (windows/normal
              forex_ml/data/features.py         forex_ml/data/splitting.py    forex_ml/training/
 ```
 
+## Forward-fill contamination
+
+Gaps in the raw candle data get forward-filled (weekends, holidays, thin liquidity)
+before this pipeline ever sees it — a forward-filled bar has zero return, zero
+volatility, and a stale spread by construction, which a model can't otherwise
+distinguish from a genuinely quiet real market. `forex.etl.pipelines.ForwardFillInator`
+(in the sibling `forex-etl` repo) now tracks which rows were imputed and writes an
+`is_forward_filled` field alongside every bar in the `forward-filled candlestick`
+InfluxDB measurement. `prepare_data_flow.py` carries it through as an available
+feature column when present (and is a no-op when it isn't, for historical data
+written before this field existed) — it's not in `split.columns_x` by default, so
+opt in via `params.yaml` if you want the model to see it.
+
 ## Stack
 
 - **Prefect** — orchestration (`forex_ml/flows/`), matching the conventions already
@@ -93,7 +106,12 @@ retraining.
 Every training run logs params, per-epoch train/val metrics, and a held-out **test**
 evaluation to MLflow (`sqlite:///mlflow.db` by default — see `train.mlflow_tracking_uri`
 in `params.yaml`), and registers the model in the MLflow Model Registry under
-`train.mlflow_experiment_name`. Inspect runs with:
+`train.mlflow_experiment_name`. Alongside the LSTM's own test metrics, every run also
+logs two baselines from `forex_ml/evaluation/baselines.py` — `baseline_majority_test_accuracy`
+(always predict the training set's most common class) and
+`baseline_persistence_test_accuracy` (predict this period repeats the previous
+period's actual class) — so `test_accuracy` is never read in isolation. Inspect runs
+with:
 
 ```bash
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
