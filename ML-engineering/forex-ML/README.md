@@ -164,6 +164,27 @@ uv run python -m forex_ml.diagnostics.stationarity --instrument EUR/USD --granul
 
 Runs ADF and KPSS together on each `split.columns_x` column (`forex_ml/diagnostics/stationarity.py`) — they test opposite null hypotheses (ADF: "has a unit root"; KPSS: "is stationary"), so using both catches blind spots either test misses alone. Both agreeing is a strong signal; disagreeing gets reported as `inconclusive` rather than silently picking one test's answer.
 
+Also reports an effect size for each test, not just the two p-values — matched to
+what each test actually estimates rather than one generic number:
+
+- **ADF** — `phi_hat` (the AR(1) coefficient) and its `half_life_bars`, extracted
+  directly from the ADF regression's own fitted model rather than a second
+  regression. With the hundreds-to-thousands of bars typical here, ADF/KPSS will
+  tend to reject the unit-root null for almost any realistic series, even a highly
+  persistent one (`phi_hat` near 1, behaving practically like a random walk over the
+  horizons that matter for `n_back`/`lookahead`) — statistical significance isn't
+  the same as practical significance, and large samples widen that gap. A short
+  half-life and a long half-life can both get called "stationary"; only `phi_hat`/
+  `half_life_bars` tells them apart.
+- **KPSS** — `kpss_ratio_to_5pct`, the raw LM statistic (already computed internally
+  by `statsmodels.tsa.stattools.kpss` and otherwise discarded, keeping only the
+  p-value) as a multiple of its own 5% critical value. KPSS doesn't have as clean a
+  real-units effect size as ADF's half-life — its statistic doesn't decompose into
+  bars or any other physical unit — but the raw magnitude still carries graduated
+  information a bare p-value throws away: a ratio of 3.0 is a much stronger
+  non-stationarity signal than 1.01, even though both cross the "significant" line
+  identically.
+
 ```bash
 uv run python -m forex_ml.evaluation.multiple_comparisons --experiment forex-lstm
 ```
