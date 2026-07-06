@@ -34,6 +34,7 @@ class FeatureParams(BaseModel):
         """Every feature column name that Stage 1 (data/features.py) will produce."""
         columns = {
             "day_sin", "day_cos", "week_sin", "week_cos",
+            "is_tokyo_session", "is_london_session", "is_new_york_session", "is_london_new_york_overlap",
             "volatility", "return", "diff_spread_close", "diff_volume",
         }
         for lookback in self.ma_lookback_list:

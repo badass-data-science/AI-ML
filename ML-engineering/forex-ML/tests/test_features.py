@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime
+
 import numpy as np
 import pandas as pd
 import pyspark.sql.functions as F
@@ -7,6 +9,7 @@ import pyspark.sql.functions as F
 from forex_ml.data.features import (
     add_calendar_features,
     add_market_features,
+    add_session_features,
     add_targets,
     engineer_features,
     window_into_arrays,
@@ -105,3 +108,48 @@ def test_window_into_arrays_preserves_chronological_order_oldest_first(spark, sy
 
     expected = [int(t) for t in synthetic_candles["unix_epoch_s"].to_numpy()[-n_back:]]
     assert window == expected
+
+
+def test_session_features_fire_at_the_right_utc_hours(spark):
+    """24 hourly bars starting at a known UTC midnight -- covers every hour exactly
+    once, so each session flag can be checked against the literal expected pattern
+    rather than just "some rows are True"."""
+    start = int(datetime.datetime(2024, 1, 2, 0, 0, tzinfo=datetime.timezone.utc).timestamp())
+    hours = list(range(24))
+    pdf = pd.DataFrame({
+        "instrument": "EUR/USD",
+        "granularity": "H1",
+        "unix_epoch_s": [start + h * 3600 for h in hours],
+    })
+
+    df = spark.createDataFrame(pdf)
+    result = add_session_features(df).orderBy("unix_epoch_s").toPandas()
+
+    assert list(result["is_tokyo_session"]) == [1.0 if 0 <= h < 9 else 0.0 for h in hours]
+    assert list(result["is_london_session"]) == [1.0 if 8 <= h < 17 else 0.0 for h in hours]
+    assert list(result["is_new_york_session"]) == [1.0 if 13 <= h < 22 else 0.0 for h in hours]
+    assert list(result["is_london_new_york_overlap"]) == [1.0 if 13 <= h < 17 else 0.0 for h in hours]
+
+
+def test_session_features_are_utc_independent_of_spark_session_timezone(spark):
+    """Same 24-hour check, but with Spark's SQL session timezone deliberately set to
+    something far from UTC -- proves the arithmetic UTC-hour computation isn't
+    silently using F.hour(F.from_unixtime(...))'s timezone-dependent interpretation."""
+    original_tz = spark.conf.get("spark.sql.session.timeZone")
+    try:
+        spark.conf.set("spark.sql.session.timeZone", "America/Los_Angeles")
+
+        start = int(datetime.datetime(2024, 1, 2, 0, 0, tzinfo=datetime.timezone.utc).timestamp())
+        hours = list(range(24))
+        pdf = pd.DataFrame({
+            "instrument": "EUR/USD",
+            "granularity": "H1",
+            "unix_epoch_s": [start + h * 3600 for h in hours],
+        })
+
+        df = spark.createDataFrame(pdf)
+        result = add_session_features(df).orderBy("unix_epoch_s").toPandas()
+
+        assert list(result["is_tokyo_session"]) == [1.0 if 0 <= h < 9 else 0.0 for h in hours]
+    finally:
+        spark.conf.set("spark.sql.session.timeZone", original_tz)

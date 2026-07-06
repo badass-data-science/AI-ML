@@ -19,6 +19,14 @@ COLUMN_TIMESTAMP = "unix_epoch_s"
 COLUMNS_PARTITION = ["instrument", "granularity"]
 COLUMNS_Y = ["pd_lead", "spread_close_lead", "volatility_lead"]
 
+# Approximate UTC session windows (standard interbank FX convention: half-open
+# [start, end) hours). Fixed UTC hours, not DST-aware — London/New York local session
+# times shift by an hour twice a year, which this simplification ignores. Good enough
+# as an indicator feature; not precise enough for exact session-open/close timing.
+TOKYO_SESSION_UTC = (0, 9)
+LONDON_SESSION_UTC = (8, 17)
+NEW_YORK_SESSION_UTC = (13, 22)
+
 
 @dataclass(frozen=True)
 class FeatureColumns:
@@ -47,6 +55,39 @@ def add_calendar_features(df: DataFrame, cols: FeatureColumns = FeatureColumns()
         .withColumn("day_cos", _day_cos_udf(ts))
         .withColumn("week_sin", _week_sin_udf(ts))
         .withColumn("week_cos", _week_cos_udf(ts))
+    )
+
+
+def add_session_features(df: DataFrame, cols: FeatureColumns = FeatureColumns()) -> DataFrame:
+    """Trading-session indicators (Tokyo/London/New York + the London-NY overlap,
+    historically the most liquid/volatile window) — a well-documented FX volatility
+    driver distinct from the existing day/week cyclical features, which capture
+    broad calendar seasonality but not which major market is currently open.
+    """
+    # UTC hour via plain arithmetic on the epoch second — NOT F.hour(F.from_unixtime(
+    # ...)), which interprets the timestamp using Spark's SQL session timezone (JVM
+    # default unless configured) and would silently shift every session boundary if
+    # that timezone isn't UTC. Unix epoch seconds are UTC by definition, so this is
+    # the only way to get the UTC hour independent of any session/JVM timezone
+    # setting — the same principle day_sin/week_sin above already rely on.
+    utc_hour = (F.col(cols.column_timestamp) % 86400) / 3600
+
+    tokyo_lo, tokyo_hi = TOKYO_SESSION_UTC
+    london_lo, london_hi = LONDON_SESSION_UTC
+    ny_lo, ny_hi = NEW_YORK_SESSION_UTC
+
+    return (
+        df
+        .withColumn("is_tokyo_session", ((utc_hour >= tokyo_lo) & (utc_hour < tokyo_hi)).cast("double"))
+        .withColumn("is_london_session", ((utc_hour >= london_lo) & (utc_hour < london_hi)).cast("double"))
+        .withColumn("is_new_york_session", ((utc_hour >= ny_lo) & (utc_hour < ny_hi)).cast("double"))
+        # [ny_lo, london_hi) is the intersection of LONDON_SESSION_UTC and
+        # NEW_YORK_SESSION_UTC given the specific constants above (NY starts later
+        # than London, London ends earlier than NY) — not a general intersection
+        # formula. Re-derive this if those constants ever change.
+        .withColumn(
+            "is_london_new_york_overlap", ((utc_hour >= ny_lo) & (utc_hour < london_hi)).cast("double"),
+        )
     )
 
 
@@ -182,6 +223,7 @@ def engineer_features(
     feature-column list so callers don't have to re-derive it.
     """
     df = add_calendar_features(df, cols)
+    df = add_session_features(df, cols)
     df = add_market_features(df, cols)
     df = add_targets(df, lookahead, cols)
     df = drop_raw_price_columns(df, columns_base, training_and_testing, cols)
