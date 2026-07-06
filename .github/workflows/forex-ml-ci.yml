@@ -40,5 +40,8 @@ jobs:
       - name: Type check
         run: uv run mypy forex_ml
 
-      - name: Test
-        run: uv run pytest -v
+      - name: Unit tests
+        run: uv run pytest -v -m "not integration"
+
+      - name: Integration tests (real local InfluxDB via Docker)
+        run: uv run pytest -v -m integration

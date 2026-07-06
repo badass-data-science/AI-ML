@@ -102,14 +102,15 @@ def engineer_and_save_task(spark: SparkSession, pdf, instrument: str, granularit
 
 @flow(name="forex-ml-prepare-data", log_prints=True)
 def prepare_data_flow(instrument: str, granularity: str, params_path: str | None = None) -> str:
+    """Does NOT stop the SparkSession it gets/creates — a JVM only ever has one active
+    SparkContext, so stopping it here would kill it out from under any other flow
+    (prepare_all_flow, serve.py's retrain loop) or test fixture sharing the same
+    process. Session lifecycle is the caller/process's responsibility; on a one-shot
+    CLI run the JVM tears down naturally when the process exits."""
     params = load_params(params_path) if params_path else load_params()
     spark = SparkSession.builder.appName("forex-ml-prepare-data").getOrCreate()
-    try:
-        pdf = pull_candles_task(instrument, granularity, params.feature)
-        key = engineer_and_save_task(spark, pdf, instrument, granularity, params.feature)
-    finally:
-        spark.stop()
-    return key
+    pdf = pull_candles_task(instrument, granularity, params.feature)
+    return engineer_and_save_task(spark, pdf, instrument, granularity, params.feature)
 
 
 def main() -> None:

@@ -33,6 +33,9 @@ python-tools-and-shortcuts = { path = "../../../python-tools-and-shortcuts", edi
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+markers = [
+    "integration: real (non-mocked) integration tests that need Docker (e.g. InfluxDB); excluded from the default run, invoke with `-m integration`",
+]
 
 [tool.ruff]
 line-length = 120

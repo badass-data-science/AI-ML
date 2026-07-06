@@ -91,18 +91,33 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 ## Tests
 
 ```bash
-uv run pytest -v
+uv run pytest -v -m "not integration"   # fast unit suite, no Docker needed
+uv run pytest -v -m integration         # real InfluxDB integration tests (needs Docker)
 ```
 
-Covers feature engineering (Spark, against synthetic candles), the time-based
-split/normalize/discretize logic (pure pandas, no Spark needed), model construction,
-and one true end-to-end smoke test: synthetic tensors → 1-epoch fit using the *real*
-validation split → held-out test evaluation → MLflow run assertion. That last test is
-what would have caught the original bug where the precomputed validation set was
-silently discarded in favor of `validation_split=`.
+The unit suite covers feature engineering (Spark, against synthetic candles), the
+time-based split/normalize/discretize logic (pure pandas, no Spark needed), model
+construction, and one true end-to-end smoke test: synthetic tensors → 1-epoch fit
+using the *real* validation split → held-out test evaluation → MLflow run assertion.
+That last test is what would have caught the original bug where the precomputed
+validation set was silently discarded in favor of `validation_split=`.
 
-CI (`.github/workflows/forex-ml-ci.yml`) runs lint (`ruff`), type-check (`mypy`), and
-the test suite on every push touching this subtree.
+`tests/test_influx_integration.py` is a second tier: it spins up a real InfluxDB 2.x
+container via Docker, seeds it with synthetic "forward-filled candlestick" rows using
+the exact schema `forex_ml.data.influx_source` queries, and pulls it back through the
+real Flux query + `InfluxDbTool` + pandas path — nothing on the DB boundary is mocked.
+A second test in the same file runs the full Stage-1 flow (pull → engineer features →
+Parquet) against that same container. It's excluded from the default run (needs
+Docker, slower) and run separately in CI. Writing it honestly surfaced a real bug:
+`prepare_data_flow`/`split_flow` used to call `spark.stop()` in a `finally` block,
+which — since a JVM only ever has one active SparkContext — killed Spark out from
+under any other flow or test fixture sharing the same process (e.g. `serve.py`'s
+retrain loop calling all three flows back-to-back for every pair). Session lifecycle
+is now the caller/process's responsibility, not the individual flow's.
+
+CI (`.github/workflows/forex-ml-ci.yml`) runs lint (`ruff`), type-check (`mypy`), the
+unit suite, and the Docker-backed integration suite on every push touching this
+subtree.
 
 ## Legacy notebooks
 
