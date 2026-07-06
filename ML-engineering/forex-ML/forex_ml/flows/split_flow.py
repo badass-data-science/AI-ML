@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 
 from prefect import flow, get_run_logger, task
+from prefect.cache_policies import NO_CACHE
 from pyspark.sql import SparkSession
 
 from forex_ml.config import SplitParams, load_params
@@ -17,8 +18,10 @@ from forex_ml.data.splitting import TimeSeriesSplitter, load_and_stack
 from forex_ml.paths import non_time_series_parquet_path, pair_key, splits_npz_path, time_series_parquet_path
 
 
-@task(name="load-split-and-save")
+@task(name="load-split-and-save", cache_policy=NO_CACHE)
 def load_split_and_save_task(
+    # NO_CACHE: args include a SparkSession, which Prefect's default cache-key hashing
+    # can't serialize — see prepare_data_flow.engineer_and_save_task for the same note.
     spark: SparkSession,
     instrument: str,
     granularity: str,

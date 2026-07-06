@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from forex_ml.data.splitting import Splits, TimeSeriesSplitter
+from forex_ml.data.splitting import Splits, TimeSeriesSplitter, load_and_stack
 
 COLUMNS_X_COMPONENTS = ["feat_0", "feat_1", "feat_2"]
 
@@ -77,3 +77,39 @@ def test_npz_round_trip(tmp_path):
     np.testing.assert_array_equal(splits.train["M"], loaded.train["M"])
     np.testing.assert_array_equal(splits.val["y"], loaded.val["y"])
     np.testing.assert_array_equal(splits.test["M"], loaded.test["M"])
+
+
+def test_load_and_stack_produces_timesteps_by_features_shape(spark, tmp_path):
+    """Regression test for a real bug: the UDF used to stack per-feature arrays into
+    one 'X' matrix built (num_features, n_back) instead of (n_back, num_features) —
+    silently swapping the time and feature axes relative to what
+    forex_ml.training.model's `input_shape=(n_back, num_features)` assumes. Every
+    other splitting test hand-constructs 'X' already in the assumed-correct shape, so
+    none of them exercise the actual stacking UDF; this one does, against a real
+    SparkSession, and checks exact per-timestep values (not just shape) so a silent
+    transpose can't slip back in even if n_back happened to equal num_features.
+    """
+    feat_a = [10.0, 11.0, 12.0, 13.0, 14.0]
+    feat_b = [100.0, 101.0, 102.0, 103.0, 104.0]
+    n_back = len(feat_a)
+
+    df_time_series = spark.createDataFrame(
+        [("EUR/USD", "H1", 0, 0.5, feat_a, feat_b)],
+        ["instrument", "granularity", "unix_epoch_s", "pd_lead", "feat_a", "feat_b"],
+    )
+    df_non_time_series = spark.createDataFrame(
+        [("EUR/USD", "H1", 0, feat_a[-1], feat_b[-1])],
+        ["instrument", "granularity", "unix_epoch_s", "feat_a", "feat_b"],
+    )
+
+    ts_path = tmp_path / "ts.parquet"
+    non_ts_path = tmp_path / "non_ts.parquet"
+    df_time_series.write.parquet(str(ts_path))
+    df_non_time_series.write.parquet(str(non_ts_path))
+
+    pdf, _ = load_and_stack(spark, str(ts_path), str(non_ts_path), ["feat_a", "feat_b"], "pd_lead")
+
+    X = np.array(pdf.loc[0, "X"])
+    assert X.shape == (n_back, 2)
+    expected = np.array([[feat_a[t], feat_b[t]] for t in range(n_back)])
+    np.testing.assert_array_equal(X, expected)

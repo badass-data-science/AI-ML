@@ -18,10 +18,26 @@ import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 from pyspark.sql.types import ArrayType, FloatType
 
-_stack_time_series = F.udf(
-    lambda *series: [[float(x) for x in s] for s in series],
-    ArrayType(ArrayType(FloatType())),
-)
+def _stack_time_series_fn(*series: list[float]) -> list[list[float]]:
+    """Stack per-feature n_back-length arrays into one (n_back, num_features) matrix
+    per row — timesteps first, then features, matching the (timesteps, features)
+    shape Keras LSTM layers expect.
+
+    The original notebook's stack_time_series UDF built this the other way around
+    ([[float(x) for x in s] for s in series], i.e. one row per FEATURE containing
+    that feature's n_back values), producing (num_features, n_back) instead. That
+    silently fed the LSTM a transposed representation — time and feature axes
+    swapped relative to what `input_shape=(n_back, num_features)` in
+    forex_ml/training/model.py assumes — and was undetected because Keras doesn't
+    validate the semantic meaning of a shape, only its arithmetic compatibility.
+    Caught here by actually running Stage 2 against real Spark output instead of
+    hand-constructed test arrays already in the (assumed) correct shape.
+    """
+    n_back = len(series[0])
+    return [[float(series[f][t]) for f in range(len(series))] for t in range(n_back)]
+
+
+_stack_time_series = F.udf(_stack_time_series_fn, ArrayType(ArrayType(FloatType())))
 
 
 def load_and_stack(

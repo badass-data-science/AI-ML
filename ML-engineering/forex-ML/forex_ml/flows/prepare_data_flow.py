@@ -17,6 +17,7 @@ import json
 
 import pyspark.sql.functions as F
 from prefect import flow, get_run_logger, task
+from prefect.cache_policies import NO_CACHE
 from pyspark.sql import DataFrame, SparkSession
 
 from forex_ml.config import FeatureParams, load_params
@@ -42,8 +43,11 @@ def pull_candles_task(instrument: str, granularity: str, params: FeatureParams):
     return pdf
 
 
-@task(name="engineer-and-save-features")
+@task(name="engineer-and-save-features", cache_policy=NO_CACHE)
 def engineer_and_save_task(spark: SparkSession, pdf, instrument: str, granularity: str, params: FeatureParams) -> str:
+    # NO_CACHE: this task's args include a SparkSession/DataFrame, which Prefect's
+    # default cache-key hashing can't serialize — without it, every run logs a noisy
+    # (harmless) HashError and just skips caching anyway, so opt out explicitly.
     logger = get_run_logger()
     columns_sort = ["instrument", "granularity", "unix_epoch_s"]
 
