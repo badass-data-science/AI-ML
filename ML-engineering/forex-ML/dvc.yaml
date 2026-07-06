@@ -1,0 +1,55 @@
+stages:
+  prepare:
+    foreach: ${pairs}
+    do:
+      cmd: >-
+        python -m forex_ml.flows.prepare_data_flow
+        --instrument "${item.instrument}" --granularity "${item.granularity}"
+      deps:
+        - forex_ml/data/influx_source.py
+        - forex_ml/data/features.py
+        - forex_ml/flows/prepare_data_flow.py
+        - forex_ml/config.py
+      params:
+        - params.yaml:
+            - feature
+      outs:
+        - output/interim/df_time_series__${item.key}__${item.granularity}__${feature.n_back}__${feature.lookahead}.parquet
+        - output/interim/df_non_time_series__${item.key}__${item.granularity}__${feature.n_back}__${feature.lookahead}.parquet
+
+  split:
+    foreach: ${pairs}
+    do:
+      cmd: >-
+        python -m forex_ml.flows.split_flow
+        --instrument "${item.instrument}" --granularity "${item.granularity}"
+      deps:
+        - output/interim/df_time_series__${item.key}__${item.granularity}__${feature.n_back}__${feature.lookahead}.parquet
+        - output/interim/df_non_time_series__${item.key}__${item.granularity}__${feature.n_back}__${feature.lookahead}.parquet
+        - forex_ml/data/splitting.py
+        - forex_ml/flows/split_flow.py
+        - forex_ml/config.py
+      params:
+        - params.yaml:
+            - split
+      outs:
+        - output/processed/splits__${item.key}__${item.granularity}__${feature.n_back}__${feature.lookahead}.npz
+
+  train:
+    foreach: ${pairs}
+    do:
+      cmd: >-
+        python -m forex_ml.flows.train_flow
+        --instrument "${item.instrument}" --granularity "${item.granularity}"
+      deps:
+        - output/processed/splits__${item.key}__${item.granularity}__${feature.n_back}__${feature.lookahead}.npz
+        - forex_ml/training/model.py
+        - forex_ml/training/train.py
+        - forex_ml/flows/train_flow.py
+        - forex_ml/config.py
+      params:
+        - params.yaml:
+            - train
+      # No `outs:` here deliberately — the trained model is an MLflow-tracked/registered
+      # artifact (see forex_ml/training/train.py), not a DVC-versioned file. DVC still
+      # tracks this stage's deps/params hashes and will re-run it when they change.
