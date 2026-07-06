@@ -88,6 +88,15 @@ def test_load_and_stack_produces_timesteps_by_features_shape(spark, tmp_path):
     none of them exercise the actual stacking UDF; this one does, against a real
     SparkSession, and checks exact per-timestep values (not just shape) so a silent
     transpose can't slip back in even if n_back happened to equal num_features.
+
+    feat_a/feat_b are strictly increasing and distinct at every position, so this also
+    pins down direction along the time axis, not just position mapping: the
+    exact-equality check below would fail just as loudly if the stacking silently
+    reversed the n_back axis as it would for a transpose. See
+    test_features.test_window_into_arrays_preserves_chronological_order_oldest_first
+    for the same guarantee traced further upstream, at the point (window_into_arrays)
+    where "oldest first, current bar last" is actually established from real
+    timestamps rather than from values chosen to look ordered.
     """
     feat_a = [10.0, 11.0, 12.0, 13.0, 14.0]
     feat_b = [100.0, 101.0, 102.0, 103.0, 104.0]
@@ -113,3 +122,6 @@ def test_load_and_stack_produces_timesteps_by_features_shape(spark, tmp_path):
     assert X.shape == (n_back, 2)
     expected = np.array([[feat_a[t], feat_b[t]] for t in range(n_back)])
     np.testing.assert_array_equal(X, expected)
+    # explicit anti-reversal check, spelled out rather than left implicit in the
+    # exact-equality assertion above
+    assert not np.array_equal(X, expected[::-1])

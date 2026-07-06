@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pyspark.sql.functions as F
 
 from forex_ml.data.features import (
     add_calendar_features,
     add_market_features,
     add_targets,
     engineer_features,
+    window_into_arrays,
 )
 
 
@@ -75,3 +77,31 @@ def test_engineer_features_produces_full_n_back_windows(spark, synthetic_candles
     for col in ["mid_open", "mid_high", "mid_low", "mid_close", "spread_close", "volume"]:
         assert col not in df_non_time_series.columns
     assert "pd_lead" in df_non_time_series.columns
+
+
+def test_window_into_arrays_preserves_chronological_order_oldest_first(spark, synthetic_candles):
+    """Pins down direction, not just shape/position: the windowed array for a given
+    row must be [oldest, ..., current] — current bar last — because that's the order
+    Keras LSTM (input_shape=(timesteps, features)) is built to consume, stepping
+    through axis 1 from index 0 forward. A reversed window (current bar first) would
+    still be shape-compatible and would still pass a position-only check with
+    monotonic-looking data if that data happened to be symmetric — it would silently
+    feed the model the sequence backwards in time. This test uses each row's own
+    unix_epoch_s as the windowed value, so "oldest first, current last" is checked
+    against ground truth (real timestamps), not merely internal consistency.
+    """
+    n_back = 5
+    df = spark.createDataFrame(synthetic_candles).withColumn("marker", F.col("unix_epoch_s").cast("double"))
+
+    windowed = window_into_arrays(df, ["marker"], n_back)
+    pdf = windowed.orderBy("unix_epoch_s").toPandas()
+
+    row = pdf.iloc[-1]  # the most recent row in the series
+    window = [int(v) for v in row["marker"]]
+
+    assert len(window) == n_back
+    assert window == sorted(window)  # strictly ascending: oldest -> most recent
+    assert window[-1] == row["unix_epoch_s"]  # current bar's own timestamp is last
+
+    expected = [int(t) for t in synthetic_candles["unix_epoch_s"].to_numpy()[-n_back:]]
+    assert window == expected
