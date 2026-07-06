@@ -72,6 +72,9 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
     assert "val_loss" in run.data.metrics  # proves validation_data was actually used
     assert "baseline_majority_test_accuracy" in run.data.metrics
     assert "baseline_persistence_test_accuracy" in run.data.metrics
+    for split_name in ("train", "val", "test"):
+        for class_idx in range(3):
+            assert f"{split_name}_class_{class_idx}_balance" in run.data.metrics
     assert run.data.params["instrument"] == "EUR/USD"
     assert run.data.params["granularity"] == "H1"
 

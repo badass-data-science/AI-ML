@@ -19,12 +19,14 @@ from pathlib import Path
 
 import mlflow
 import mlflow.keras
+import numpy as np
 from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 from tensorflow.random import set_seed
 
 from forex_ml.config import TrainParams, load_params
 from forex_ml.data.splitting import Splits
 from forex_ml.evaluation.baselines import majority_class_baseline, persistence_baseline
+from forex_ml.evaluation.class_balance import class_balance
 from forex_ml.paths import pair_key, splits_npz_path
 from forex_ml.training.model import build_lstm_regressor, compile_model, configure_gpu_memory_growth
 
@@ -92,6 +94,16 @@ def train_and_evaluate(
             **params.model_dump(exclude={"mlflow_experiment_name", "mlflow_tracking_uri"}),
         })
 
+        # Cheap regime-drift check, logged before training even starts: train's class
+        # balance is close to even by construction (thresholds come from train
+        # quantiles), but val/test aren't guaranteed to be if the volatility regime
+        # has shifted between periods.
+        for split_name, split in (("train", splits.train), ("val", splits.val), ("test", splits.test)):
+            mlflow.log_metrics({
+                f"{split_name}_{class_name}_balance": fraction
+                for class_name, fraction in class_balance(split["y"]).items()
+            })
+
         model = build_lstm_regressor(params, input_shape, num_outputs)
         compile_model(model, params)
 
@@ -119,6 +131,23 @@ def train_and_evaluate(
             "baseline_majority_test_accuracy": majority_result["accuracy"],
             "baseline_persistence_test_accuracy": persistence_result["accuracy"],
         })
+
+        # Per-row correctness (not just aggregate accuracy), saved as an artifact so a
+        # proper paired significance test (McNemar's — see
+        # forex_ml/evaluation/multiple_comparisons.py) can compare the LSTM against a
+        # baseline on the SAME test rows, rather than treating them as independent
+        # samples. lstm_correct and majority_correct are aligned 1:1 with the full
+        # test set; persistence_correct is one row shorter (see persistence_baseline).
+        lstm_pred_idx = np.argmax(model.predict(splits.test["M"], verbose=0), axis=1)
+        lstm_true_idx = np.argmax(splits.test["y"], axis=1)
+        predictions_path = model_dir / f"{run_uid}_predictions.npz"
+        np.savez_compressed(
+            predictions_path,
+            lstm_correct=(lstm_pred_idx == lstm_true_idx),
+            majority_correct=majority_result["correct"],
+            persistence_correct=persistence_result["correct"],
+        )
+        mlflow.log_artifact(str(predictions_path))
 
         mlflow.keras.log_model(model, name="model", registered_model_name=params.mlflow_experiment_name)
 
