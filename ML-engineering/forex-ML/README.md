@@ -21,6 +21,19 @@ feature column when present (and is a no-op when it isn't, for historical data
 written before this field existed) — it's not in `split.columns_x` by default, so
 opt in via `params.yaml` if you want the model to see it.
 
+## Trading session features
+
+`add_session_features` (`forex_ml/data/features.py`) adds `is_tokyo_session`,
+`is_london_session`, `is_new_york_session`, and `is_london_new_york_overlap` (the
+historically most liquid/volatile window) — a well-documented FX volatility driver
+distinct from the existing day/week cyclical features, which capture broad calendar
+seasonality but not which major market is currently open. Session boundaries are
+fixed approximate UTC hours (not DST-aware), computed by plain arithmetic on the
+epoch second rather than `F.hour(F.from_unixtime(...))` — the latter is silently
+sensitive to Spark's SQL session timezone, which isn't guaranteed to be UTC. Like
+`is_forward_filled`, these aren't in `split.columns_x` by default — opt in via
+`params.yaml`.
+
 ## Stack
 
 - **Prefect** — orchestration (`forex_ml/flows/`), matching the conventions already
@@ -110,12 +123,44 @@ in `params.yaml`), and registers the model in the MLflow Model Registry under
 logs two baselines from `forex_ml/evaluation/baselines.py` — `baseline_majority_test_accuracy`
 (always predict the training set's most common class) and
 `baseline_persistence_test_accuracy` (predict this period repeats the previous
-period's actual class) — so `test_accuracy` is never read in isolation. Inspect runs
-with:
+period's actual class) — so `test_accuracy` is never read in isolation. Every run
+also logs each split's actual class balance (`train_class_0_balance`,
+`val_class_1_balance`, etc., from `forex_ml/evaluation/class_balance.py`) — train is
+close to even by construction (thresholds come from train quantiles), but val/test
+aren't guaranteed to be if the volatility regime has shifted between periods, and
+this is the cheapest way to see that drift instead of it hiding inside a single
+accuracy number. Inspect runs with:
 
 ```bash
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
+
+## Diagnostics
+
+```bash
+uv run python -m forex_ml.diagnostics.autocorrelation --instrument EUR/USD --granularity H1
+```
+
+Reports ACF/PACF-based sanity checks against a pair's real Stage-1 output (`forex_ml/diagnostics/autocorrelation.py`) — specifically, the first lag at which the target column's autocorrelation is no longer statistically distinguishable from zero. That's a floor on how much history carries *linear* signal, not a definitive answer (the LSTM can exploit nonlinear structure this can't see), but if `feature.n_back` in `params.yaml` is wildly larger than the suggested minimum, it's worth checking rather than assuming — `n_back=200`/`lookahead=4` were carried over from the original notebooks with no such check behind them.
+
+```bash
+uv run python -m forex_ml.diagnostics.stationarity --instrument EUR/USD --granularity H1
+```
+
+Runs ADF and KPSS together on each `split.columns_x` column (`forex_ml/diagnostics/stationarity.py`) — they test opposite null hypotheses (ADF: "has a unit root"; KPSS: "is stationary"), so using both catches blind spots either test misses alone. Both agreeing is a strong signal; disagreeing gets reported as `inconclusive` rather than silently picking one test's answer.
+
+```bash
+uv run python -m forex_ml.evaluation.multiple_comparisons --experiment forex-lstm
+```
+
+With 14 `(instrument, granularity)` pairs each getting their own "does the LSTM beat
+the baseline?" test, some pair will look significant by chance even if none has real
+signal. `forex_ml/evaluation/multiple_comparisons.py` runs McNemar's test per pair
+(the correct paired test for two classifiers evaluated on the same test rows — every
+training run now saves a `predictions.npz` artifact with per-row correctness for
+exactly this) and applies a Benjamini-Hochberg FDR correction across all pairs, so
+the reported significant count reflects the whole comparison, not each pair judged
+against a raw, uncorrected alpha.
 
 ## Tests
 
