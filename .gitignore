@@ -3,3 +3,6 @@ __pycache__/
 .pytest_cache/
 .venv/
 uv.lock
+
+# forex-ML commits its lockfile deliberately for build reproducibility
+!ML-engineering/forex-ML/uv.lock
