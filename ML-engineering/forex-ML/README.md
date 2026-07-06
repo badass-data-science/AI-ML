@@ -18,3 +18,9 @@ make-all-training-data.ipynb
 ```
 prepare-ml-ts-data.ipynb
 ```
+
+## Train an LSTM model
+
+```
+python lstm.py
+```
