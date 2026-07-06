@@ -240,6 +240,53 @@ purely because there are more hypotheses to correct for, not because that result
 own p-value changed. Re-run this after each new training run rather than treating an
 early verdict as final.
 
+```bash
+uv run python -m forex_ml.evaluation.rolling_cv --instrument EUR/USD --granularity H1 \
+  --n-folds 5 --window sliding --min-train-bars 2000 --val-bars 500 --test-bars 500
+```
+
+A single train/val/test split (however it was chosen) is one sample from one slice of
+history — a good or bad result could just be that slice, not the configuration.
+`forex_ml/evaluation/rolling_cv.py` walks a train/val/test window forward through the
+timeline, retraining fresh each fold, and reports the *distribution* of test results
+(LSTM and both baselines) across folds rather than a single number — mean/std/min/max,
+and whether the LSTM clears the majority baseline in every fold or just on average.
+
+Two window types, chosen via `--window`:
+
+- **`sliding`** — the training block has a fixed length (`--min-train-bars`) and
+  slides forward with the fold, so every fold trains on comparably-recent history.
+  More robust to regime change (older data ages out), at the cost of using less data
+  per fold than is actually available by the final fold.
+- **`expanding`** — the training block always starts at the first bar and grows by
+  one test-block's worth (`--test-bars`) each fold. Uses all available data, at the
+  cost of assuming older data is still as relevant as recent data — a stronger
+  stationarity assumption.
+
+This is a **robustness diagnostic only** — it doesn't change what gets deployed. Each
+fold trains and logs to its own MLflow experiment (`<experiment>-rolling-cv`), tagged
+with its fold index and window type, and is never registered in the model registry.
+Keeping it in a separate experiment matters: `multiple_comparisons.py` scans one
+experiment for one "official" run per `(pair, configuration)`, and rolling-CV fold
+runs (same configuration, deliberately re-trained many times across time windows)
+would otherwise either get silently collapsed into that pool as bogus "retrains" or
+inflate it with runs that were never meant to be independent hypotheses.
+
+Two related but heavier extensions are possible **future next steps**, not built
+here:
+
+- **Model/architecture selection tool** — using performance averaged across folds to
+  choose between competing configurations before committing to a final single
+  train/val/test run, rather than just reporting how stable *one* configuration is.
+  This would need to feed fold results into a selection decision, and interacts with
+  the multiple-comparisons machinery above (comparing many configurations' fold
+  averages is itself another layer of multiple comparisons).
+- **Walk-forward retraining strategy** — turning this into the actual production
+  retraining cadence, where each fold's model is a real deployment candidate for its
+  period rather than a diagnostic artifact. Bigger change: touches the model
+  registry, deployment selection, and is meaningfully heavier compute on a single
+  local GPU than a one-off diagnostic run.
+
 ## Tests
 
 ```bash

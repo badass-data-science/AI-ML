@@ -203,11 +203,78 @@ class TimeSeriesSplitter:
                 outcome.append([0, 0, 1])
         return outcome
 
-    def split_train_val_test_by_proportion(self, train_val_proportion: list[float], purge_bars: int = 0) -> Splits:
-        train_lo, train_hi, val_lo, val_hi, test_lo, test_hi = self._compute_boundaries(
-            train_val_proportion, purge_bars,
-        )
+    def _rolling_boundaries(
+        self,
+        n_folds: int,
+        min_train_bars: int,
+        val_bars: int,
+        test_bars: int,
+        window: str,
+        purge_bars: int = 0,
+    ) -> list[tuple[float, float, float, float, float, float]]:
+        """Boundary timestamps for `n_folds` walk-forward folds — same contiguous
+        train/val/test-block-plus-purge-gap structure as `_compute_boundaries`, but
+        positioned at `n_folds` successive points along the timeline (a rolling
+        robustness diagnostic) instead of just once.
 
+        Every fold's val/test blocks are fixed-length (`val_bars`/`test_bars`) and
+        slide forward by `test_bars` each fold — one test block is the walk-forward
+        "step". `window` controls the training block:
+          - "sliding": fixed length (`min_train_bars`), sliding forward with the
+            fold — every fold trains on a comparably-recent, comparably-sized
+            history. More robust to regime change; discards older data.
+          - "expanding": always starts at the very first bar and grows by
+            `test_bars` each fold, so later folds accumulate strictly more history.
+            Uses all available data; assumes older data is as relevant as recent
+            data.
+        """
+        if window not in ("sliding", "expanding"):
+            raise ValueError(f"window must be 'sliding' or 'expanding', got {window!r}")
+
+        bar_spacing = self._median_bar_spacing()
+        if bar_spacing <= 0:
+            raise ValueError("Cannot compute rolling folds: fewer than 2 rows in this pair's data")
+
+        min_ts = self.df[self.timestamp_column].min()
+        max_ts = self.df[self.timestamp_column].max()
+        total_bars = (max_ts - min_ts) / bar_spacing
+
+        bars_needed = min_train_bars + val_bars + test_bars + (n_folds - 1) * test_bars
+        if bars_needed > total_bars:
+            max_folds = max(0, int((total_bars - min_train_bars - val_bars - test_bars) // test_bars) + 1)
+            raise ValueError(
+                f"Not enough data for {n_folds} rolling fold(s): need ~{bars_needed:.0f} bars, "
+                f"have ~{total_bars:.0f}. At most {max_folds} fold(s) fit with these window sizes — "
+                f"reduce n_folds/min_train_bars/val_bars/test_bars, or wait for more data to accumulate."
+            )
+
+        purge_seconds = purge_bars * bar_spacing
+        boundaries = []
+        for fold in range(n_folds):
+            if window == "expanding":
+                train_start_bars = 0.0
+                train_bars = min_train_bars + fold * test_bars
+            else:
+                train_start_bars = float(fold * test_bars)
+                train_bars = min_train_bars
+
+            train_lo = min_ts + train_start_bars * bar_spacing
+            train_hi_raw = train_lo + train_bars * bar_spacing
+            val_lo_raw = train_hi_raw
+            val_hi_raw = val_lo_raw + val_bars * bar_spacing
+            test_lo_raw = val_hi_raw
+            test_hi_raw = test_lo_raw + test_bars * bar_spacing
+
+            boundaries.append((
+                train_lo, train_hi_raw - purge_seconds,
+                val_lo_raw + purge_seconds, val_hi_raw - purge_seconds,
+                test_lo_raw + purge_seconds, test_hi_raw,
+            ))
+        return boundaries
+
+    def _build_splits(
+        self, train_lo: float, train_hi: float, val_lo: float, val_hi: float, test_lo: float, test_hi: float,
+    ) -> Splits:
         df_train = self._slice_by_timestamp(train_lo, train_hi)
         df_val = self._slice_by_timestamp(val_lo, val_hi)
         df_test = self._slice_by_timestamp(test_lo, test_hi, inclusive_hi=True)
@@ -247,3 +314,24 @@ class TimeSeriesSplitter:
             val={"M": X_val_norm, "y": y_val},
             test={"M": X_test_norm, "y": y_test},
         )
+
+    def split_train_val_test_by_proportion(self, train_val_proportion: list[float], purge_bars: int = 0) -> Splits:
+        return self._build_splits(*self._compute_boundaries(train_val_proportion, purge_bars))
+
+    def rolling_folds(
+        self,
+        n_folds: int,
+        min_train_bars: int,
+        val_bars: int,
+        test_bars: int,
+        window: str = "sliding",
+        purge_bars: int = 0,
+    ) -> list[Splits]:
+        """`n_folds` walk-forward train/val/test splits for a robustness diagnostic
+        across time periods — see `_rolling_boundaries` for the "sliding" vs
+        "expanding" window semantics. Each fold gets its own train-only
+        normalization statistics (via `_build_splits`), exactly like a single split —
+        no leakage across folds, since a later fold's training data was never
+        touched by an earlier fold's stats."""
+        boundaries = self._rolling_boundaries(n_folds, min_train_bars, val_bars, test_bars, window, purge_bars)
+        return [self._build_splits(*b) for b in boundaries]

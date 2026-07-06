@@ -68,10 +68,24 @@ def train_and_evaluate(
     instrument: str,
     granularity: str,
     output_dir: Path,
+    *,
+    experiment_name: str | None = None,
+    register_model: bool = True,
+    extra_params: dict | None = None,
+    run_name_suffix: str | None = None,
 ) -> dict:
     """Train on `splits.train`, validate on the real Stage-2 `splits.val`, evaluate on
     the held-out `splits.test`, and log params/metrics/model to MLflow. Returns the
-    dict of test metrics."""
+    dict of test metrics.
+
+    `experiment_name`/`register_model`/`extra_params`/`run_name_suffix` exist for
+    forex_ml.evaluation.rolling_cv, which trains many folds of the SAME
+    configuration across different time windows purely as a robustness diagnostic —
+    those runs should log to their own MLflow experiment (not the pair's normal one,
+    which forex_ml.evaluation.multiple_comparisons scans for one "official" run per
+    (pair, configuration)) and should NOT register a model (they aren't deployment
+    candidates). Defaults reproduce the original single-split behavior exactly.
+    """
     configure_gpu_memory_growth()
     set_seed(params.tensorflow_seed)
 
@@ -84,14 +98,19 @@ def train_and_evaluate(
     num_outputs = splits.train["y"].shape[1]
 
     mlflow.set_tracking_uri(params.mlflow_tracking_uri)
-    mlflow.set_experiment(params.mlflow_experiment_name)
+    mlflow.set_experiment(experiment_name or params.mlflow_experiment_name)
 
-    with mlflow.start_run(run_name=f"{instrument}_{granularity}_{run_uid}"):
+    run_name = f"{instrument}_{granularity}_{run_uid}"
+    if run_name_suffix:
+        run_name = f"{run_name}_{run_name_suffix}"
+
+    with mlflow.start_run(run_name=run_name):
         mlflow.log_params({
             "instrument": instrument,
             "granularity": granularity,
             "run_uid": run_uid,
             **params.model_dump(exclude={"mlflow_experiment_name", "mlflow_tracking_uri"}),
+            **(extra_params or {}),
         })
 
         # Cheap regime-drift check, logged before training even starts: train's class
@@ -149,7 +168,10 @@ def train_and_evaluate(
         )
         mlflow.log_artifact(str(predictions_path))
 
-        mlflow.keras.log_model(model, name="model", registered_model_name=params.mlflow_experiment_name)
+        if register_model:
+            mlflow.keras.log_model(model, name="model", registered_model_name=params.mlflow_experiment_name)
+        else:
+            mlflow.keras.log_model(model, name="model")
 
         history_path = model_dir / f"{run_uid}_history.json"
         history_path.write_text(json.dumps(history.history, indent=2))

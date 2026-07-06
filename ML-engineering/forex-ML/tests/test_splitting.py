@@ -179,3 +179,96 @@ def test_purge_bars_removes_exactly_the_rows_outside_purged_boundaries():
     assert expected_train_n < len(unpurged.train["y"])
     assert expected_val_n < len(unpurged.val["y"])
     assert expected_test_n < len(unpurged.test["y"])
+
+
+def test_rolling_boundaries_sliding_window_has_constant_train_size_and_steps_by_test_bars():
+    bar_spacing = 3600
+    splitter = _splitter(100)
+
+    boundaries = splitter._rolling_boundaries(
+        n_folds=3, min_train_bars=40, val_bars=10, test_bars=10, window="sliding",
+    )
+    assert len(boundaries) == 3
+
+    for train_lo, train_hi, val_lo, val_hi, test_lo, test_hi in boundaries:
+        assert (train_hi - train_lo) == pytest.approx(40 * bar_spacing)  # constant train size
+        assert (val_hi - val_lo) == pytest.approx(10 * bar_spacing)
+        assert (test_hi - test_lo) == pytest.approx(10 * bar_spacing)
+        assert val_lo == train_hi
+        assert test_lo == val_hi
+
+    # each fold's test block starts exactly test_bars (10 bars) after the previous one's
+    for (a, b) in zip(boundaries, boundaries[1:]):
+        assert b[4] - a[4] == pytest.approx(10 * bar_spacing)
+        assert b[0] - a[0] == pytest.approx(10 * bar_spacing)  # train start also slides
+
+
+def test_rolling_boundaries_expanding_window_grows_train_and_keeps_start_fixed():
+    bar_spacing = 3600
+    splitter = _splitter(100)
+
+    boundaries = splitter._rolling_boundaries(
+        n_folds=3, min_train_bars=40, val_bars=10, test_bars=10, window="expanding",
+    )
+    min_ts = splitter.df["unix_epoch_s"].min()
+
+    for i, (train_lo, train_hi, val_lo, val_hi, test_lo, test_hi) in enumerate(boundaries):
+        assert train_lo == min_ts  # anchored at the start every fold
+        assert (train_hi - train_lo) == pytest.approx((40 + i * 10) * bar_spacing)  # grows each fold
+        assert val_lo == train_hi
+        assert test_lo == val_hi
+
+    # test blocks still step forward by test_bars each fold, same as sliding
+    for (a, b) in zip(boundaries, boundaries[1:]):
+        assert b[4] - a[4] == pytest.approx(10 * bar_spacing)
+
+
+def test_rolling_boundaries_rejects_unknown_window():
+    with pytest.raises(ValueError, match="window"):
+        _splitter(100)._rolling_boundaries(
+            n_folds=2, min_train_bars=10, val_bars=5, test_bars=5, window="bogus",
+        )
+
+
+def test_rolling_boundaries_raises_with_helpful_message_when_not_enough_data():
+    with pytest.raises(ValueError, match=r"At most \d+ fold\(s\) fit"):
+        _splitter(50)._rolling_boundaries(
+            n_folds=10, min_train_bars=40, val_bars=10, test_bars=10, window="sliding",
+        )
+
+
+def test_rolling_folds_row_counts_match_recomputed_boundaries():
+    """Cross-validated the same way test_purge_bars_removes_exactly_the_rows... is:
+    recompute expected row counts independently from the boundaries themselves rather
+    than trusting rolling_folds' own arithmetic twice."""
+    splitter = _splitter(100)
+    purge_bars = 2
+
+    boundaries = splitter._rolling_boundaries(
+        n_folds=3, min_train_bars=40, val_bars=10, test_bars=10, window="sliding", purge_bars=purge_bars,
+    )
+    folds = splitter.rolling_folds(
+        n_folds=3, min_train_bars=40, val_bars=10, test_bars=10, window="sliding", purge_bars=purge_bars,
+    )
+    assert len(folds) == 3
+
+    ts = splitter.df[splitter.timestamp_column]
+    for (train_lo, train_hi, val_lo, val_hi, test_lo, test_hi), split in zip(boundaries, folds):
+        expected_train_n = int(((ts >= train_lo) & (ts < train_hi)).sum())
+        expected_val_n = int(((ts >= val_lo) & (ts < val_hi)).sum())
+        expected_test_n = int(((ts >= test_lo) & (ts <= test_hi)).sum())
+        assert len(split.train["y"]) == expected_train_n
+        assert len(split.val["y"]) == expected_val_n
+        assert len(split.test["y"]) == expected_test_n
+
+
+def test_rolling_folds_sliding_vs_expanding_agree_on_first_fold():
+    """The first fold is identical regardless of window type -- expanding and sliding
+    only diverge starting from the second fold, since expanding's train_bars formula
+    (min_train_bars + fold * test_bars) equals min_train_bars at fold=0."""
+    splitter = _splitter(100)
+    sliding = splitter.rolling_folds(n_folds=2, min_train_bars=40, val_bars=10, test_bars=10, window="sliding")
+    expanding = splitter.rolling_folds(n_folds=2, min_train_bars=40, val_bars=10, test_bars=10, window="expanding")
+
+    np.testing.assert_array_equal(sliding[0].train["M"], expanding[0].train["M"])
+    assert len(sliding[1].train["y"]) < len(expanding[1].train["y"])  # they diverge by fold 2
