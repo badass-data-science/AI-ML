@@ -129,7 +129,22 @@ also logs each split's actual class balance (`train_class_0_balance`,
 close to even by construction (thresholds come from train quantiles), but val/test
 aren't guaranteed to be if the volatility regime has shifted between periods, and
 this is the cheapest way to see that drift instead of it hiding inside a single
-accuracy number. Inspect runs with:
+accuracy number.
+
+This does NOT introduce lookahead into the pipeline: `class_balance()` only reads the
+already-materialized `y` arrays and writes a metric — it never touches `X`, never
+feeds back into the (already train-only) threshold computation in
+`TimeSeriesSplitter`, and is never passed to `model.fit()`/`model.evaluate()` or
+either callback. The test set enters the model exactly once, at the single
+`model.evaluate(splits.test...)` call after training is finished, regardless of this
+logging. There is a real but different risk worth naming: because this sits next to
+`test_accuracy` in the same MLflow run, it puts test-set characteristics in front of
+you at the same time as test performance — if you see "test period skewed toward
+class 2" and go adjust thresholds/features/hyperparameters and retry, *that's* test-set
+leakage, just introduced by the human in the loop rather than by the code. Treat it as
+a diagnostic to explain a result you already have, not a signal to iterate against.
+
+Inspect runs with:
 
 ```bash
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
