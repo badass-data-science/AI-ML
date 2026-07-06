@@ -47,7 +47,12 @@ def load_split_and_save_task(
         class_cutoff_percentiles=split_params.class_cutoff_percentiles,
         column_y=split_params.column_y,
     )
-    splits = splitter.split_train_val_test_by_proportion(split_params.train_val_proportion)
+    # purge_bars: a window can reach n_back bars backward and a label can reach
+    # lookahead bars forward, so either direction can cross a split boundary — purge
+    # max(n_back, lookahead) bars on both sides of each boundary to remove it.
+    splits = splitter.split_train_val_test_by_proportion(
+        split_params.train_val_proportion, purge_bars=max(n_back, lookahead),
+    )
 
     out_path = splits_npz_path(output_dir, key)
     splits.save_npz(out_path)

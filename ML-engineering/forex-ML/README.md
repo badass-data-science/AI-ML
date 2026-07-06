@@ -39,6 +39,17 @@ by `forex_ml/config.py` at load time. In particular, `split.columns_x` is checke
 against the columns Stage 1 actually produces, so a config that references a feature
 that doesn't exist fails immediately instead of three stages later.
 
+Train/val/test are split strictly by timestamp (`TimeSeriesSplitter` in
+`forex_ml/data/splitting.py`) — never shuffled — so training data is always
+chronologically before validation, which is always before test. `split_flow.py` also
+purges `max(n_back, lookahead)` bars on both sides of each split boundary: a window
+reaches `n_back` bars backward and a label reaches `lookahead` bars forward, so
+without a purge gap the row right at a boundary can have a window or label that
+overlaps the adjacent split. That's not leakage in the sense of the model seeing
+future inputs at inference time, but the two adjacent rows are highly autocorrelated,
+which can optimistically bias the validation/test metric right at the seam (see
+Lopez de Prado's *purged k-fold CV* for the general technique).
+
 ## Running a single pair
 
 ```bash

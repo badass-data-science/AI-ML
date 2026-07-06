@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from forex_ml.data.splitting import Splits, TimeSeriesSplitter, load_and_stack
 
@@ -125,3 +126,56 @@ def test_load_and_stack_produces_timesteps_by_features_shape(spark, tmp_path):
     # explicit anti-reversal check, spelled out rather than left implicit in the
     # exact-equality assertion above
     assert not np.array_equal(X, expected[::-1])
+
+
+def test_compute_boundaries_purge_gap_is_symmetric_and_exact():
+    """Precise arithmetic check on the purge-gap boundaries themselves, independent
+    of any X/y data: with purge_bars bars purged on each side of a boundary, the gap
+    between the earlier split's hi and the later split's lo must be exactly
+    2 * purge_bars * bar_spacing, and purge_bars=0 must reproduce the original
+    (unpurged) boundaries exactly."""
+    n = 100
+    bar_spacing = 3600  # matches _make_pdf's hourly synthetic timestamps
+    splitter = _splitter(n)
+
+    train_lo, train_hi, val_lo, val_hi, test_lo, test_hi = splitter._compute_boundaries([0.6, 0.2], purge_bars=0)
+    assert val_lo == train_hi
+    assert test_lo == val_hi
+
+    purge_bars = 5
+    p_train_lo, p_train_hi, p_val_lo, p_val_hi, p_test_lo, p_test_hi = splitter._compute_boundaries(
+        [0.6, 0.2], purge_bars=purge_bars,
+    )
+    assert p_train_lo == train_lo  # only boundaries move, not the outer edges
+    assert p_test_hi == test_hi
+    assert p_val_lo - p_train_hi == pytest.approx(2 * purge_bars * bar_spacing)
+    assert p_test_lo - p_val_hi == pytest.approx(2 * purge_bars * bar_spacing)
+
+
+def test_purge_bars_removes_exactly_the_rows_outside_purged_boundaries():
+    """Behavioral check, cross-validated against an independent recomputation from
+    the boundaries themselves: purging must produce exactly the row counts implied by
+    _compute_boundaries, and those counts must be strictly smaller than the unpurged
+    split (i.e. rows adjacent to each boundary actually got dropped, not just that the
+    boundary arithmetic changed on paper)."""
+    n = 100
+    purge_bars = 5
+    splitter = _splitter(n)
+
+    train_lo, train_hi, val_lo, val_hi, test_lo, test_hi = splitter._compute_boundaries(
+        [0.6, 0.2], purge_bars=purge_bars,
+    )
+    ts = splitter.df[splitter.timestamp_column]
+    expected_train_n = int(((ts >= train_lo) & (ts < train_hi)).sum())
+    expected_val_n = int(((ts >= val_lo) & (ts < val_hi)).sum())
+    expected_test_n = int(((ts >= test_lo) & (ts <= test_hi)).sum())
+
+    purged = splitter.split_train_val_test_by_proportion([0.6, 0.2], purge_bars=purge_bars)
+    assert len(purged.train["y"]) == expected_train_n
+    assert len(purged.val["y"]) == expected_val_n
+    assert len(purged.test["y"]) == expected_test_n
+
+    unpurged = splitter.split_train_val_test_by_proportion([0.6, 0.2], purge_bars=0)
+    assert expected_train_n < len(unpurged.train["y"])
+    assert expected_val_n < len(unpurged.val["y"])
+    assert expected_test_n < len(unpurged.test["y"])

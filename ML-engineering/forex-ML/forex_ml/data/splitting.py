@@ -155,6 +155,42 @@ class TimeSeriesSplitter:
         )
         return self.df[mask].copy().sort_values(by=self.timestamp_column).reset_index(drop=True)
 
+    def _median_bar_spacing(self) -> float:
+        timestamps = np.sort(self.df[self.timestamp_column].to_numpy())
+        if len(timestamps) < 2:
+            return 0.0
+        return float(np.median(np.diff(timestamps)))
+
+    def _compute_boundaries(
+        self, train_val_proportion: list[float], purge_bars: int = 0,
+    ) -> tuple[float, float, float, float, float, float]:
+        """Returns (train_lo, train_hi, val_lo, val_hi, test_lo, test_hi).
+
+        `purge_bars` carves a symmetric gap of `purge_bars` bars on both sides of
+        each split boundary (a "purged" split, per Lopez de Prado's *Advances in
+        Financial Machine Learning*). Without it, a training row sitting right at a
+        boundary has a label computed via a forward lookahead into what is nominally
+        validation data, and the first validation row's backward window reaches into
+        training data. Neither is leakage in the sense of the model seeing future
+        inputs at inference time — but the two adjacent rows are highly
+        autocorrelated, which can optimistically bias the validation/test metric
+        right at the seam. Pass `max(n_back, lookahead)` as `purge_bars` to remove
+        exactly the rows capable of that overlap.
+        """
+        min_ts = self.df[self.timestamp_column].min()
+        max_ts = self.df[self.timestamp_column].max()
+        span = max_ts - min_ts
+
+        train_stop = min_ts + int(train_val_proportion[0] * span)
+        val_stop = train_stop + int(train_val_proportion[1] * span)
+        purge_seconds = purge_bars * self._median_bar_spacing()
+
+        return (
+            min_ts, train_stop - purge_seconds,
+            train_stop + purge_seconds, val_stop - purge_seconds,
+            val_stop + purge_seconds, max_ts,
+        )
+
     @staticmethod
     def _compute_outcome(y_values: np.ndarray, percentiles: np.ndarray) -> list[list[int]]:
         outcome = []
@@ -167,17 +203,14 @@ class TimeSeriesSplitter:
                 outcome.append([0, 0, 1])
         return outcome
 
-    def split_train_val_test_by_proportion(self, train_val_proportion: list[float]) -> Splits:
-        min_ts = self.df[self.timestamp_column].min()
-        max_ts = self.df[self.timestamp_column].max()
-        span = max_ts - min_ts
+    def split_train_val_test_by_proportion(self, train_val_proportion: list[float], purge_bars: int = 0) -> Splits:
+        train_lo, train_hi, val_lo, val_hi, test_lo, test_hi = self._compute_boundaries(
+            train_val_proportion, purge_bars,
+        )
 
-        train_stop = min_ts + int(train_val_proportion[0] * span)
-        val_stop = train_stop + int(train_val_proportion[1] * span)
-
-        df_train = self._slice_by_timestamp(min_ts, train_stop)
-        df_val = self._slice_by_timestamp(train_stop, val_stop)
-        df_test = self._slice_by_timestamp(val_stop, max_ts, inclusive_hi=True)
+        df_train = self._slice_by_timestamp(train_lo, train_hi)
+        df_val = self._slice_by_timestamp(val_lo, val_hi)
+        df_test = self._slice_by_timestamp(test_lo, test_hi, inclusive_hi=True)
 
         percentiles = np.percentile(df_train[self.column_y].to_numpy(), self.class_cutoff_percentiles)
         df_train["outcome"] = self._compute_outcome(df_train[self.column_y].to_numpy(), percentiles)
@@ -188,10 +221,11 @@ class TimeSeriesSplitter:
         X_val = np.array([np.array(row) for row in df_val["X"].to_numpy()])
         X_test = np.array([np.array(row) for row in df_test["X"].to_numpy()])
 
-        # Normalize using train-only statistics, broadcast identically to val/test —
-        # never let val/test distributions leak into the normalization.
+        # Normalize using train-only statistics — cut off at the same purged boundary
+        # as df_train itself, broadcast identically to val/test. Never let val/test
+        # (or the purged gap) leak into the normalization.
         train_non_ts = (
-            self.df_non_time_series[self.df_non_time_series[self.timestamp_column] < train_stop]
+            self.df_non_time_series[self.df_non_time_series[self.timestamp_column] < train_hi]
             [self.columns_x_components].to_numpy()
         )
         mean = np.mean(train_non_ts, axis=0)
