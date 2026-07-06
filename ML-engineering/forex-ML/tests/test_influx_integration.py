@@ -135,13 +135,21 @@ def seeded_candles(influxdb_container):
 
 
 def _patch_database_config(monkeypatch, influxdb_container) -> None:
-    """database_config lazy-loads credentials via a module-level `__getattr__`, but
-    that trigger fires the moment something does `from database_config import NAME` —
-    i.e. at IMPORT time, not at first attribute access. forex_ml.data.influx_source
-    does exactly that import at its own module top-level, so this patch (and the
-    deferred `import forex_ml...` that follows it in each test) must both happen
-    inside the test function, never at this file's top level, or the very act of
-    collecting this test file would try to hit real AWS Secrets Manager.
+    """database_config lazy-loads credentials via a module-level `__getattr__`
+    triggered on attribute access. forex_ml.data.influx_source now references it as
+    `database_config.INFLUXDB_URL` (module access, resolved fresh each call) rather
+    than `from database_config import INFLUXDB_URL` (which would freeze the resolved
+    value into influx_source's own namespace at IMPORT time — see
+    forex_ml/data/influx_source.py's module docstring and
+    tests/test_secrets_isolation.py for the real bug this used to cause: merely
+    collecting a sibling test file that imports forex_ml.flows.prepare_data_flow was
+    enough to eagerly resolve real AWS-backed credentials, and no later monkeypatch
+    here could undo that already-executed import).
+
+    This patch (and the deferred `import forex_ml...` that follows it in each test)
+    still happens inside the test function rather than at this file's top level, as
+    defensive practice — but the fix above means it's no longer load-bearing for
+    correctness the way it used to be.
 
     Patching must target `database_config.get_secret` specifically, not
     `python_tools_and_shortcuts.aws.secrets_manager.get_secret` — database_config did

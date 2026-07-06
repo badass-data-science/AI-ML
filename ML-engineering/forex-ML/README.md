@@ -55,7 +55,14 @@ pydantic) plus editable installs of the sibling `forex-etl` and
 `python-tools-and-shortcuts` packages — no `sys.path.append` hacks, no hardcoded
 absolute paths. InfluxDB credentials are handled entirely by
 `forex.etl.config.database_config` (AWS Secrets Manager-backed); nothing here touches
-secrets directly.
+secrets directly. `forex_ml/data/influx_source.py` accesses it as
+`database_config.INFLUXDB_URL` (module attribute, resolved fresh on each call) rather
+than `from database_config import INFLUXDB_URL` — the latter would freeze the
+resolved secret the moment ANYTHING imports the module (including just pytest
+collecting an unrelated test file), permanently, for the life of the process, with
+no way for a later test to substitute different credentials. See
+`tests/test_secrets_isolation.py` for the regression test and the real bug this
+guards against.
 
 ## Configuration
 
