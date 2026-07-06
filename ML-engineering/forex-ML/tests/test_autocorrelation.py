@@ -37,6 +37,37 @@ def test_more_persistent_process_suggests_a_longer_lookback():
     assert high_persistence["suggested_min_lookback"] > low_persistence["suggested_min_lookback"]
 
 
+def test_white_noise_effect_size_is_small():
+    """A white noise series can still have a `suggested_min_lookback` of e.g. 1-2 if a
+    single early lag's CI happens to exclude zero by chance, but its ACF/PACF
+    magnitudes should be small throughout -- the effect-size fields are what actually
+    distinguish "noise" from "real, if short, memory"."""
+    rng = np.random.default_rng(0)
+    series = rng.normal(size=2000)
+    result = diagnose_series(series, nlags=50)
+    assert result["acf_max_abs_magnitude"] < 0.15
+    assert result["pacf_max_abs_magnitude"] < 0.15
+
+
+def test_more_persistent_process_has_larger_effect_size():
+    low_persistence = diagnose_series(_ar1_series(rho=0.3, n=3000, seed=10), nlags=100)
+    high_persistence = diagnose_series(_ar1_series(rho=0.95, n=3000, seed=11), nlags=100)
+    assert high_persistence["acf_max_abs_magnitude"] > low_persistence["acf_max_abs_magnitude"]
+
+
+def test_practical_min_lookback_is_independent_of_significance_threshold():
+    """With a strongly persistent process, the ACF stays above the practical
+    threshold for longer than it stays "statistically significant" is NOT guaranteed
+    in general, but practical_min_lookback must always be computed from the fixed
+    magnitude threshold, not from the confidence interval -- verify it reacts to
+    `practical_threshold` while `suggested_min_lookback` (CI-based) does not."""
+    series = _ar1_series(rho=0.9, n=3000, seed=2)
+    loose = diagnose_series(series, nlags=100, practical_threshold=0.5)
+    strict = diagnose_series(series, nlags=100, practical_threshold=0.01)
+    assert loose["suggested_min_lookback"] == strict["suggested_min_lookback"]
+    assert loose["practical_min_lookback"] <= strict["practical_min_lookback"]
+
+
 def test_diagnose_pair_runs_against_real_stage1_output(spark, synthetic_candles, tmp_path):
     """End-to-end: run real Stage-1 feature engineering, then diagnose the resulting
     pd_lead column -- proves the Spark read + column selection actually works, not
@@ -58,3 +89,6 @@ def test_diagnose_pair_runs_against_real_stage1_output(spark, synthetic_candles,
     result = diagnose_pair(spark, str(tmp_path), "EUR/USD", "H1", n_back=10, lookahead=2, nlags=20)
     assert result["n_observations"] > 0
     assert result["suggested_min_lookback"] >= 1
+    assert result["suggested_min_lookback_pacf"] >= 1
+    assert result["acf_max_abs_magnitude"] >= 0.0
+    assert result["pacf_max_abs_magnitude"] >= 0.0

@@ -165,6 +165,13 @@ uv run python -m forex_ml.diagnostics.autocorrelation --instrument EUR/USD --gra
 
 Reports ACF/PACF-based sanity checks against a pair's real Stage-1 output (`forex_ml/diagnostics/autocorrelation.py`) — specifically, the first lag at which the target column's autocorrelation is no longer statistically distinguishable from zero. That's a floor on how much history carries *linear* signal, not a definitive answer (the LSTM can exploit nonlinear structure this can't see), but if `feature.n_back` in `params.yaml` is wildly larger than the suggested minimum, it's worth checking rather than assuming — `n_back=200`/`lookahead=4` were carried over from the original notebooks with no such check behind them.
 
+Also reports an effect size for both ACF and PACF, not just the significance cutoff — the same statistical-vs-practical-significance gap as the ADF/KPSS diagnostics below. With the hundreds-to-thousands of bars typical here, the confidence interval narrows enough that a tiny correlation (0.02) can still be "significant," which would make `suggested_min_lookback` track sample size rather than real memory. Reported per series:
+
+- `acf_magnitude_at_suggested_lookback` / `pacf_magnitude_at_suggested_lookback` — the raw |ACF|/|PACF| value right at the statistically-suggested cutoff, and `*_max_abs_magnitude` — the largest magnitude across all computed lags. Together these show how small "still significant" actually is.
+- `practical_min_lookback` / `practical_min_lookback_pacf` — the first lag where |ACF|/|PACF| drops below a fixed threshold (`--practical-threshold`, default 0.1) that does **not** shrink as the sample grows, giving a second answer anchored to correlation strength rather than significance.
+
+PACF gets its own `suggested_min_lookback_pacf`/`practical_min_lookback_pacf` rather than reusing ACF's, since PACF is the more standard tool for spotting an AR cutoff (it tends to drop sharply at the true order, where ACF decays gradually) — the two can legitimately disagree, and both are printed.
+
 ```bash
 uv run python -m forex_ml.diagnostics.stationarity --instrument EUR/USD --granularity H1
 ```
