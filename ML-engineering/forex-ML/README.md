@@ -1,26 +1,110 @@
+# forex-ML
 
-## Preparing data for LSTM training
-
-#### Pull forward-filled Forex time series data from the InfluxDB database and save it as a DataFrame
-
-```
-prepare-training-and-inference-data.ipynb
-```
-
-Alternative, you can run the wrapper for this notebook that iterates through each of the currency pairs and granularities:
+LSTM training pipeline for Forex time series data pulled from InfluxDB. Three stages,
+each independently orchestrated, versioned, and tracked:
 
 ```
-make-all-training-data.ipynb
+InfluxDB ──▶ prepare (feature engineering) ──▶ split (windows/normalize) ──▶ train (LSTM + eval)
+             forex_ml/data/features.py         forex_ml/data/splitting.py    forex_ml/training/
 ```
 
-#### Divide into training, validation, and test sets
+## Stack
 
-```
-prepare-ml-ts-data.ipynb
+- **Prefect** — orchestration (`forex_ml/flows/`), matching the conventions already
+  used by the ETL side (`Data-Science/Data-Engineering/ETL`)
+- **MLflow** — experiment tracking + model registry (local SQLite backend by default)
+- **DVC** — data/model-artifact versioning (`dvc.yaml`, keyed on `params.yaml`)
+- **pydantic** — validated pipeline config (`forex_ml/config.py`, loaded from
+  `params.yaml`)
+- **pytest** — unit + end-to-end smoke tests (`tests/`)
+
+## Setup
+
+```bash
+uv sync --extra dev
 ```
 
-## Train an LSTM model
+This installs pinned dependencies (PySpark, TensorFlow/Keras, MLflow, Prefect, DVC,
+pydantic) plus editable installs of the sibling `forex-etl` and
+`python-tools-and-shortcuts` packages — no `sys.path.append` hacks, no hardcoded
+absolute paths. InfluxDB credentials are handled entirely by
+`forex.etl.config.database_config` (AWS Secrets Manager-backed); nothing here touches
+secrets directly.
 
+## Configuration
+
+Everything the pipeline needs — instrument/granularity lists, feature-engineering
+params, split proportions, model hyperparameters — lives in `params.yaml`, validated
+by `forex_ml/config.py` at load time. In particular, `split.columns_x` is checked
+against the columns Stage 1 actually produces, so a config that references a feature
+that doesn't exist fails immediately instead of three stages later.
+
+## Running a single pair
+
+```bash
+uv run python -m forex_ml.flows.prepare_data_flow --instrument EUR/USD --granularity H1
+uv run python -m forex_ml.flows.split_flow        --instrument EUR/USD --granularity H1
+uv run python -m forex_ml.flows.train_flow        --instrument EUR/USD --granularity H1
 ```
-python lstm.py
+
+Every output path is keyed on `(instrument, granularity, n_back, lookahead)` (see
+`forex_ml/paths.py`), so preparing multiple pairs never overwrites another pair's data
+— the original notebooks wrote Stage 2's output to a single shared
+`output/data.pickled` regardless of pair, which meant only one pair could be staged
+for training at a time.
+
+## Running everything via DVC
+
+```bash
+uv run dvc repro
 ```
+
+`dvc.yaml` defines a `prepare → split → train` chain per `(instrument, granularity)`
+pair listed in `params.yaml`'s `pairs:` (one independent chain per pair — see `dvc dag`
+for the full graph). Re-running only re-executes stages whose deps or params actually
+changed. A local DVC remote is configured as a placeholder
+(`/home/emily/dvc-storage/forex-ml`) — swap it for S3/GCS via `dvc remote add` for
+real shared storage.
+
+## Scheduled retraining (optional)
+
+```bash
+uv run python -m forex_ml.flows.serve
+```
+
+Starts a weekly Prefect deployment that runs prepare → split → train for every pair in
+`params.yaml`, mirroring `forex/flows/serve.py` on the ETL side. Most day-to-day use is
+just the individual flows or `dvc repro` above; this is for unattended periodic
+retraining.
+
+## Experiment tracking
+
+Every training run logs params, per-epoch train/val metrics, and a held-out **test**
+evaluation to MLflow (`sqlite:///mlflow.db` by default — see `train.mlflow_tracking_uri`
+in `params.yaml`), and registers the model in the MLflow Model Registry under
+`train.mlflow_experiment_name`. Inspect runs with:
+
+```bash
+uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+
+## Tests
+
+```bash
+uv run pytest -v
+```
+
+Covers feature engineering (Spark, against synthetic candles), the time-based
+split/normalize/discretize logic (pure pandas, no Spark needed), model construction,
+and one true end-to-end smoke test: synthetic tensors → 1-epoch fit using the *real*
+validation split → held-out test evaluation → MLflow run assertion. That last test is
+what would have caught the original bug where the precomputed validation set was
+silently discarded in favor of `validation_split=`.
+
+CI (`.github/workflows/forex-ml-ci.yml`) runs lint (`ruff`), type-check (`mypy`), and
+the test suite on every push touching this subtree.
+
+## Legacy notebooks
+
+`notebooks_legacy/` holds the three original notebooks this package replaced, kept for
+ad-hoc exploration only — see `notebooks_legacy/README.md` for what replaced what.
