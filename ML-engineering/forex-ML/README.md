@@ -162,6 +162,23 @@ exactly this) and applies a Benjamini-Hochberg FDR correction across all pairs, 
 the reported significant count reflects the whole comparison, not each pair judged
 against a raw, uncorrected alpha.
 
+This is designed for building up data **incrementally** — with one local GPU and no
+cloud compute, pairs get trained individually over time rather than all 14 at once.
+Two things follow from that:
+
+- If a pair gets retrained (new hyperparameters, more data, etc.), only its most
+  recent run is used — `report_across_pairs` pulls runs ordered by `start_time`
+  descending and skips older runs once a pair's latest one is found, so an earlier
+  attempt never silently overwrites a later one depending on MLflow's internal
+  ordering.
+- The correction is a function of *how many pairs currently have data*, not the
+  full set of 14. As more pairs get trained, the correction re-tightens across
+  everything — a pair marked significant today can stop being significant once more
+  pairs are added, purely because there are more tests to correct for, not because
+  that pair's own result changed. Re-run this after each new pair rather than
+  treating an early verdict as final; the CLI prints "N of M expected pairs have
+  data so far" (reading the expected total from `params.yaml`) as a reminder.
+
 ## Tests
 
 ```bash

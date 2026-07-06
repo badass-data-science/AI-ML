@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import time
+
+import mlflow
 import numpy as np
 import pytest
 
@@ -108,3 +111,63 @@ def test_report_across_pairs_finds_both_pairs_end_to_end(tmp_path):
     for result in report.values():
         assert 0.0 <= result["p_value"] <= 1.0
         assert 0.0 <= result["p_adjusted"] <= 1.0
+
+
+def _log_manual_run(
+    tracking_uri: str,
+    experiment_name: str,
+    instrument: str,
+    granularity: str,
+    lstm_correct: np.ndarray,
+    majority_correct: np.ndarray,
+    artifact_path,
+) -> None:
+    """Logs a run with hand-picked predictions.npz content, bypassing real training
+    entirely -- for tests that need deterministic control over which run "wins"
+    rather than depending on what a tiny 1-epoch model happens to learn."""
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment(experiment_name)
+    with mlflow.start_run():
+        mlflow.log_params({"instrument": instrument, "granularity": granularity})
+        np.savez_compressed(
+            artifact_path,
+            lstm_correct=lstm_correct,
+            majority_correct=majority_correct,
+            persistence_correct=majority_correct[1:],
+        )
+        mlflow.log_artifact(str(artifact_path))
+
+
+def test_report_across_pairs_uses_only_the_most_recent_run_for_a_retrained_pair(tmp_path):
+    """Simulates retraining the same pair over time (expected when building up data
+    incrementally on a single local GPU rather than training all pairs at once): the
+    second run must win, not be silently overwritten by iteration order."""
+    tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    n = 200
+    rng = np.random.default_rng(0)
+    majority_correct = rng.random(n) > 0.5
+
+    # first (older) attempt: LSTM just agrees with the baseline everywhere -> no
+    # discordant pairs -> p-value == 1.0 (not significant)
+    _log_manual_run(
+        tracking_uri, "retrain-test", "EUR/USD", "H1",
+        lstm_correct=majority_correct, majority_correct=majority_correct,
+        artifact_path=tmp_path / "old_predictions.npz",
+    )
+    time.sleep(0.05)  # ensure a distinct, later start_time for the "retrained" run
+
+    # second (newer) attempt: LSTM right almost everywhere the baseline is wrong,
+    # and right everywhere the baseline is right too -> heavily one-sided discordant
+    # pairs -> very small p-value (clearly significant)
+    lstm_correct_improved = majority_correct | (rng.random(n) > 0.05)
+    _log_manual_run(
+        tracking_uri, "retrain-test", "EUR/USD", "H1",
+        lstm_correct=lstm_correct_improved, majority_correct=majority_correct,
+        artifact_path=tmp_path / "new_predictions.npz",
+    )
+
+    report = report_across_pairs(tracking_uri, "retrain-test", baseline="majority")
+
+    assert set(report.keys()) == {"EUR/USD_H1"}  # one pair, not two runs double-counted
+    assert report["EUR/USD_H1"]["p_value"] < 0.01  # reflects the newer, improved run
+    assert report["EUR/USD_H1"]["significant_after_correction"] is True

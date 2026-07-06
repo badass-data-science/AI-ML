@@ -73,6 +73,12 @@ def report_across_pairs(
     """Pulls every run in `experiment_name`, downloads each run's predictions.npz
     artifact (saved by forex_ml.training.train.train_and_evaluate), runs McNemar's
     test per pair (LSTM vs the chosen baseline), and BH-corrects across all of them.
+
+    If a pair has been trained more than once (expected on a single local GPU, where
+    pairs get retrained individually over time as hyperparameters are refined rather
+    than all trained together), only the MOST RECENT run for that pair is used —
+    runs are pulled ordered by start_time descending and older duplicates for an
+    already-seen pair are skipped.
     """
     if baseline not in ("majority", "persistence"):
         raise ValueError(f"baseline must be 'majority' or 'persistence', got {baseline!r}")
@@ -83,10 +89,13 @@ def report_across_pairs(
         raise ValueError(f"No MLflow experiment named {experiment_name!r}")
 
     pair_p_values: dict[str, float] = {}
-    for run in client.search_runs([experiment.experiment_id]):
+    for run in client.search_runs([experiment.experiment_id], order_by=["start_time DESC"]):
         instrument = run.data.params.get("instrument")
         granularity = run.data.params.get("granularity")
         pair_label = f"{instrument}_{granularity}"
+
+        if pair_label in pair_p_values:
+            continue  # already have this pair's most recent run; skip older ones
 
         artifact_path = None
         for artifact in client.list_artifacts(run.info.run_id):
@@ -111,9 +120,22 @@ def report_across_pairs(
     return benjamini_hochberg_report(pair_p_values, alpha=alpha)
 
 
-def _print_report(report: dict[str, dict]) -> None:
+def _print_report(report: dict[str, dict], total_pairs_expected: int | None = None) -> None:
     n_significant = sum(1 for r in report.values() if r["significant_after_correction"])
-    print(f"{len(report)} pairs tested, {n_significant} significant after BH-FDR correction:\n")
+    if total_pairs_expected is not None and len(report) < total_pairs_expected:
+        print(
+            f"{len(report)} of {total_pairs_expected} expected pairs have data so far "
+            f"({n_significant} significant after BH-FDR correction on what's available):\n"
+        )
+        print(
+            "NOTE: as more pairs get trained, this correction will re-tighten across "
+            "all of them -- a pair marked significant today can stop being significant "
+            "once more pairs are added, purely because there are more tests to correct "
+            "for, not because that pair's own result changed. Re-run this after each new "
+            "pair rather than treating an early verdict as final.\n"
+        )
+    else:
+        print(f"{len(report)} pairs tested, {n_significant} significant after BH-FDR correction:\n")
     for pair, result in sorted(report.items(), key=lambda kv: kv[1]["p_adjusted"]):
         flag = "SIGNIFICANT" if result["significant_after_correction"] else "not significant"
         print(f"  {pair:20s} p={result['p_value']:.4f}  p_adjusted={result['p_adjusted']:.4f}  {flag}")
@@ -122,6 +144,8 @@ def _print_report(report: dict[str, dict]) -> None:
 def main() -> None:
     import argparse
 
+    from forex_ml.config import load_params
+
     parser = argparse.ArgumentParser(
         description="Report which (instrument, granularity) pairs beat their baseline, BH-FDR corrected."
     )
@@ -129,10 +153,19 @@ def main() -> None:
     parser.add_argument("--experiment", default="forex-lstm")
     parser.add_argument("--baseline", default="majority", choices=["majority", "persistence"])
     parser.add_argument("--alpha", type=float, default=0.05)
+    parser.add_argument("--params", default=None, help="Path to params.yaml, to report progress against the full pair set")
     args = parser.parse_args()
 
     report = report_across_pairs(args.tracking_uri, args.experiment, args.baseline, args.alpha)
-    _print_report(report)
+
+    total_pairs_expected = None
+    try:
+        params = load_params(args.params) if args.params else load_params()
+        total_pairs_expected = len(params.feature.instruments) * len(params.feature.granularities)
+    except FileNotFoundError:
+        pass
+
+    _print_report(report, total_pairs_expected)
 
 
 if __name__ == "__main__":
