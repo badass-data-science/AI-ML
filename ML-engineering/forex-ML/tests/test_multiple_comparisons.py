@@ -107,7 +107,9 @@ def test_report_across_pairs_finds_both_pairs_end_to_end(tmp_path):
 
     report = report_across_pairs(tracking_uri, "cross-pair-test", baseline="majority")
 
-    assert set(report.keys()) == {"EUR/USD_H1", "AUD/USD_H1"}
+    assert {(r["instrument"], r["granularity"]) for r in report.values()} == {
+        ("EUR/USD", "H1"), ("AUD/USD", "H1"),
+    }
     for result in report.values():
         assert 0.0 <= result["p_value"] <= 1.0
         assert 0.0 <= result["p_adjusted"] <= 1.0
@@ -121,14 +123,22 @@ def _log_manual_run(
     lstm_correct: np.ndarray,
     majority_correct: np.ndarray,
     artifact_path,
+    extra_params: dict | None = None,
 ) -> None:
     """Logs a run with hand-picked predictions.npz content, bypassing real training
     entirely -- for tests that need deterministic control over which run "wins"
-    rather than depending on what a tiny 1-epoch model happens to learn."""
+    rather than depending on what a tiny 1-epoch model happens to learn.
+
+    `extra_params` simulates other TrainParams (architecture, epochs, etc.) being
+    logged alongside instrument/granularity -- used to distinguish "same
+    configuration, retrained" from "different configuration, same pair" in
+    _model_config_signature."""
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(experiment_name)
     with mlflow.start_run():
-        mlflow.log_params({"instrument": instrument, "granularity": granularity})
+        mlflow.log_params({
+            "instrument": instrument, "granularity": granularity, **(extra_params or {}),
+        })
         np.savez_compressed(
             artifact_path,
             lstm_correct=lstm_correct,
@@ -168,6 +178,40 @@ def test_report_across_pairs_uses_only_the_most_recent_run_for_a_retrained_pair(
 
     report = report_across_pairs(tracking_uri, "retrain-test", baseline="majority")
 
-    assert set(report.keys()) == {"EUR/USD_H1"}  # one pair, not two runs double-counted
-    assert report["EUR/USD_H1"]["p_value"] < 0.01  # reflects the newer, improved run
-    assert report["EUR/USD_H1"]["significant_after_correction"] is True
+    assert len(report) == 1  # one (pair, configuration), not two runs double-counted
+    result = next(iter(report.values()))
+    assert (result["instrument"], result["granularity"]) == ("EUR/USD", "H1")
+    assert result["p_value"] < 0.01  # reflects the newer, improved run
+    assert result["significant_after_correction"] is True
+
+
+def test_report_across_pairs_treats_different_configurations_as_separate_hypotheses(tmp_path):
+    """Architecture search on the SAME pair (different number_of_cells_per_rnn_layer,
+    say) must NOT collapse to "most recent run" the way a same-configuration retrain
+    does -- each configuration tried is its own hypothesis and needs its own slot in
+    the BH correction, or picking whichever architecture wins would silently escape
+    correction entirely."""
+    tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    n = 200
+    rng = np.random.default_rng(0)
+    majority_correct = rng.random(n) > 0.5
+    lstm_correct = majority_correct | (rng.random(n) > 0.05)  # clearly beats baseline
+
+    _log_manual_run(
+        tracking_uri, "arch-search-test", "EUR/USD", "H1",
+        lstm_correct=lstm_correct, majority_correct=majority_correct,
+        artifact_path=tmp_path / "arch_a_predictions.npz",
+        extra_params={"number_of_cells_per_rnn_layer": "[32]"},
+    )
+    time.sleep(0.05)
+    _log_manual_run(
+        tracking_uri, "arch-search-test", "EUR/USD", "H1",
+        lstm_correct=lstm_correct, majority_correct=majority_correct,
+        artifact_path=tmp_path / "arch_b_predictions.npz",
+        extra_params={"number_of_cells_per_rnn_layer": "[64, 32]"},
+    )
+
+    report = report_across_pairs(tracking_uri, "arch-search-test", baseline="majority")
+
+    assert len(report) == 2  # both configurations kept, not collapsed to the latest
+    assert all((r["instrument"], r["granularity"]) == ("EUR/USD", "H1") for r in report.values())

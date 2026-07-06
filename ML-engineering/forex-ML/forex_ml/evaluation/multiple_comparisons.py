@@ -12,9 +12,24 @@ selection. This module:
   2. Applies a Benjamini-Hochberg FDR correction across all pairs, so the number of
      "significant" results as a WHOLE stays honest instead of each pair being judged
      against a raw, uncorrected alpha.
+  3. Groups by (pair, model configuration), not by pair alone — see
+     `_model_config_signature`. Architecture search (different layer counts/widths,
+     activation functions, epochs, regularization, learning rate, ANY training
+     parameter — on the same pair) is itself a form of model selection: picking
+     whichever configuration wins and reporting only that one's p-value is exactly
+     the kind of researcher-degrees-of-freedom problem this whole module exists to
+     guard against. Treating every distinct configuration tried as its own hypothesis
+     keeps the correction honest as architecture search gets more frequent.
+     Retraining the SAME configuration as more data accumulates over time (the
+     single-local-GPU, incremental-data workflow this was originally built for) still
+     collapses to its most recent run — that's genuinely one hypothesis re-evaluated
+     with an updated estimate, not a new one.
 """
 
 from __future__ import annotations
+
+import hashlib
+import json
 
 import mlflow
 import numpy as np
@@ -64,6 +79,38 @@ def benjamini_hochberg_report(pair_p_values: dict[str, float], alpha: float = 0.
     }
 
 
+def _model_config_signature(run) -> str:
+    """Hash of every MLflow param logged for this run except `instrument`/
+    `granularity` (already captured by the pair label) and `run_uid` (unique per run
+    by construction — including it would make every single run its own
+    "configuration" and defeat the point). Two runs count as the SAME configuration
+    only if every other logged param matches exactly: architecture
+    (`number_of_cells_per_rnn_layer`/`number_of_cells_per_dense_layer`), activation
+    functions, epochs, batch size, regularization, dropout, learning rate — the full
+    `TrainParams` set logged in `train_and_evaluate`, not just layer count/width.
+    Whole-params equality, not a hand-picked subset, is the point: any change a human
+    might make between training attempts on the same pair should count as a distinct
+    hypothesis for the multiple-comparisons correction below, not just the ones we
+    thought to name.
+    """
+    excluded = {"instrument", "granularity", "run_uid"}
+    items = sorted((k, v) for k, v in run.data.params.items() if k not in excluded)
+    payload = json.dumps(items, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()[:12]
+
+
+def _config_summary(run) -> str:
+    """Short human-readable architecture snapshot for print output only. Grouping
+    itself is decided by `_model_config_signature`, which hashes every logged param,
+    not just the ones summarized here."""
+    keys = [
+        "number_of_cells_per_rnn_layer", "number_of_cells_per_dense_layer",
+        "lstm_activation_function", "dense_activation_function", "epochs",
+    ]
+    parts = [f"{k}={run.data.params[k]}" for k in keys if k in run.data.params]
+    return ", ".join(parts) if parts else "(no architecture params logged)"
+
+
 def report_across_pairs(
     tracking_uri: str,
     experiment_name: str,
@@ -72,13 +119,17 @@ def report_across_pairs(
 ) -> dict[str, dict]:
     """Pulls every run in `experiment_name`, downloads each run's predictions.npz
     artifact (saved by forex_ml.training.train.train_and_evaluate), runs McNemar's
-    test per pair (LSTM vs the chosen baseline), and BH-corrects across all of them.
+    test per (pair, model configuration), and BH-corrects across all of them.
 
-    If a pair has been trained more than once (expected on a single local GPU, where
-    pairs get retrained individually over time as hyperparameters are refined rather
-    than all trained together), only the MOST RECENT run for that pair is used —
-    runs are pulled ordered by start_time descending and older duplicates for an
-    already-seen pair are skipped.
+    Runs are grouped by (instrument, granularity, `_model_config_signature`), not by
+    pair alone. If the SAME configuration has been trained more than once for a pair
+    (expected on a single local GPU, where data is built up incrementally over time),
+    only its most recent run is used — runs are pulled ordered by start_time
+    descending and older duplicates for an already-seen (pair, configuration) are
+    skipped. A DIFFERENT configuration trained on the same pair (architecture search)
+    is treated as a separate hypothesis with its own entry in the report and its own
+    slot in the correction, rather than silently overwriting or being overwritten by
+    another configuration's result.
     """
     if baseline not in ("majority", "persistence"):
         raise ValueError(f"baseline must be 'majority' or 'persistence', got {baseline!r}")
@@ -89,13 +140,15 @@ def report_across_pairs(
         raise ValueError(f"No MLflow experiment named {experiment_name!r}")
 
     pair_p_values: dict[str, float] = {}
+    metadata: dict[str, dict] = {}
     for run in client.search_runs([experiment.experiment_id], order_by=["start_time DESC"]):
         instrument = run.data.params.get("instrument")
         granularity = run.data.params.get("granularity")
-        pair_label = f"{instrument}_{granularity}"
+        config_sig = _model_config_signature(run)
+        key = f"{instrument}_{granularity}::{config_sig}"
 
-        if pair_label in pair_p_values:
-            continue  # already have this pair's most recent run; skip older ones
+        if key in pair_p_values:
+            continue  # already have this (pair, configuration)'s most recent run
 
         artifact_path = None
         for artifact in client.list_artifacts(run.info.run_id):
@@ -115,57 +168,58 @@ def report_across_pairs(
             # align by dropping the LSTM's corresponding first-row prediction.
             lstm_correct = lstm_correct[1:]
 
-        pair_p_values[pair_label] = mcnemar_p_value(lstm_correct, baseline_correct)
+        pair_p_values[key] = mcnemar_p_value(lstm_correct, baseline_correct)
+        metadata[key] = {
+            "instrument": instrument,
+            "granularity": granularity,
+            "config_summary": _config_summary(run),
+        }
 
-    return benjamini_hochberg_report(pair_p_values, alpha=alpha)
+    report = benjamini_hochberg_report(pair_p_values, alpha=alpha)
+    for key, meta in metadata.items():
+        report[key].update(meta)
+    return report
 
 
-def _print_report(report: dict[str, dict], total_pairs_expected: int | None = None) -> None:
+def _print_report(report: dict[str, dict]) -> None:
     n_significant = sum(1 for r in report.values() if r["significant_after_correction"])
-    if total_pairs_expected is not None and len(report) < total_pairs_expected:
-        print(
-            f"{len(report)} of {total_pairs_expected} expected pairs have data so far "
-            f"({n_significant} significant after BH-FDR correction on what's available):\n"
-        )
-        print(
-            "NOTE: as more pairs get trained, this correction will re-tighten across "
-            "all of them -- a pair marked significant today can stop being significant "
-            "once more pairs are added, purely because there are more tests to correct "
-            "for, not because that pair's own result changed. Re-run this after each new "
-            "pair rather than treating an early verdict as final.\n"
-        )
-    else:
-        print(f"{len(report)} pairs tested, {n_significant} significant after BH-FDR correction:\n")
-    for pair, result in sorted(report.items(), key=lambda kv: kv[1]["p_adjusted"]):
+    distinct_pairs = {(r["instrument"], r["granularity"]) for r in report.values()}
+    print(
+        f"{len(report)} (pair, configuration) combination(s) tested across "
+        f"{len(distinct_pairs)} distinct pair(s), {n_significant} significant after "
+        f"BH-FDR correction:\n"
+    )
+    print(
+        "NOTE: this correction re-tightens every time a new configuration or pair is "
+        "added -- a result marked significant today can stop being significant once "
+        "more are added, purely because there are more tests to correct for, not "
+        "because that result's own p-value changed. Re-run this after each new "
+        "training run rather than treating an early verdict as final.\n"
+    )
+    for _, result in sorted(report.items(), key=lambda kv: kv[1]["p_adjusted"]):
         flag = "SIGNIFICANT" if result["significant_after_correction"] else "not significant"
-        print(f"  {pair:20s} p={result['p_value']:.4f}  p_adjusted={result['p_adjusted']:.4f}  {flag}")
+        label = f"{result['instrument']}_{result['granularity']}"
+        print(
+            f"  {label:15s} [{result['config_summary']}]  "
+            f"p={result['p_value']:.4f}  p_adjusted={result['p_adjusted']:.4f}  {flag}"
+        )
 
 
 def main() -> None:
     import argparse
 
-    from forex_ml.config import load_params
-
     parser = argparse.ArgumentParser(
-        description="Report which (instrument, granularity) pairs beat their baseline, BH-FDR corrected."
+        description="Report which (instrument, granularity, model configuration) combinations "
+                     "beat their baseline, BH-FDR corrected."
     )
     parser.add_argument("--tracking-uri", default="sqlite:///mlflow.db")
     parser.add_argument("--experiment", default="forex-lstm")
     parser.add_argument("--baseline", default="majority", choices=["majority", "persistence"])
     parser.add_argument("--alpha", type=float, default=0.05)
-    parser.add_argument("--params", default=None, help="Path to params.yaml, to report progress against the full pair set")
     args = parser.parse_args()
 
     report = report_across_pairs(args.tracking_uri, args.experiment, args.baseline, args.alpha)
-
-    total_pairs_expected = None
-    try:
-        params = load_params(args.params) if args.params else load_params()
-        total_pairs_expected = len(params.feature.instruments) * len(params.feature.granularities)
-    except FileNotFoundError:
-        pass
-
-    _print_report(report, total_pairs_expected)
+    _print_report(report)
 
 
 if __name__ == "__main__":

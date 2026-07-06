@@ -205,29 +205,40 @@ uv run python -m forex_ml.evaluation.multiple_comparisons --experiment forex-lst
 
 With 14 `(instrument, granularity)` pairs each getting their own "does the LSTM beat
 the baseline?" test, some pair will look significant by chance even if none has real
-signal. `forex_ml/evaluation/multiple_comparisons.py` runs McNemar's test per pair
-(the correct paired test for two classifiers evaluated on the same test rows — every
-training run now saves a `predictions.npz` artifact with per-row correctness for
-exactly this) and applies a Benjamini-Hochberg FDR correction across all pairs, so
-the reported significant count reflects the whole comparison, not each pair judged
-against a raw, uncorrected alpha.
+signal. `forex_ml/evaluation/multiple_comparisons.py` runs McNemar's test per (pair,
+model configuration) (the correct paired test for two classifiers evaluated on the
+same test rows — every training run now saves a `predictions.npz` artifact with
+per-row correctness for exactly this) and applies a Benjamini-Hochberg FDR correction
+across all of them, so the reported significant count reflects the whole comparison,
+not each result judged against a raw, uncorrected alpha.
 
 This is designed for building up data **incrementally** — with one local GPU and no
-cloud compute, pairs get trained individually over time rather than all 14 at once.
-Two things follow from that:
+cloud compute, pairs get trained individually over time rather than all 14 at once,
+and architecture search (trying different layer counts/widths, activation functions,
+epochs, etc. on the same pair) is expected to be a frequent, ongoing part of that.
+That workflow has two genuinely different reasons to retrain the same pair, and this
+module treats them differently on purpose:
 
-- If a pair gets retrained (new hyperparameters, more data, etc.), only its most
-  recent run is used — `report_across_pairs` pulls runs ordered by `start_time`
-  descending and skips older runs once a pair's latest one is found, so an earlier
-  attempt never silently overwrites a later one depending on MLflow's internal
-  ordering.
-- The correction is a function of *how many pairs currently have data*, not the
-  full set of 14. As more pairs get trained, the correction re-tightens across
-  everything — a pair marked significant today can stop being significant once more
-  pairs are added, purely because there are more tests to correct for, not because
-  that pair's own result changed. Re-run this after each new pair rather than
-  treating an early verdict as final; the CLI prints "N of M expected pairs have
-  data so far" (reading the expected total from `params.yaml`) as a reminder.
+- **Same configuration, more data accumulated** — only the most recent run counts.
+  `report_across_pairs` groups by `(instrument, granularity, _model_config_signature)`
+  — a hash of every logged `TrainParams` field, not just layer count/width — and
+  pulls runs ordered by `start_time` descending, skipping older runs once a
+  (pair, configuration)'s latest one is found. This is genuinely one hypothesis
+  re-evaluated with an updated estimate, not a new one.
+- **Different configuration on the same pair (architecture search)** — treated as a
+  *separate* hypothesis with its own entry in the report and its own slot in the BH
+  correction. Collapsing this to "whichever configuration was trained most recently"
+  would silently discard every other configuration's result from the correction,
+  understating how many hypotheses were actually tested — exactly the kind of
+  researcher-degrees-of-freedom problem this module exists to catch, and one that
+  gets worse the more often architecture search happens, not better.
+
+Because the correction is a function of however many (pair, configuration)
+combinations currently have data, it re-tightens every time a new one is added — a
+result marked significant today can stop being significant once more are added,
+purely because there are more hypotheses to correct for, not because that result's
+own p-value changed. Re-run this after each new training run rather than treating an
+early verdict as final.
 
 ## Tests
 
