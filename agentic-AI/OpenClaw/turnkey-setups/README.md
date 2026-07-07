@@ -19,7 +19,7 @@ export OPENCLAW_HOME=/../../../openclaw
 In this directory, you will find one or more turnkey OpenClaw setup. Select the one you want by setting the "OPENCLAW_TURNKEY_SETUP_HOME" environment variable, e.g., 
 
 ```
-export OPENCLAW_TURNKEY_SETUP_HOME=<path to this directory>/docker-local-ollama
+export OPENCLAW_TURNKEY_SETUP_HOME=<path to this directory>
 ```
 
 Set "OPENCLAW_DEFAULT_LLM" to the default (installed) Ollama LLM you want to use, e.g.:
@@ -59,7 +59,7 @@ cat $OPENCLAW_TURNKEY_SETUP_HOME/append-to-Dockerfile >> Dockerfile
 
 docker build --no-cache -t openclaw:local -f Dockerfile .
 
-papermill $OPENCLAW_TURNKEY_SETUP_HOME/configure-OpenClaw.ipynb /tmp/configure-OpenClaw.OUTPUT.ipynb
+papermill $OPENCLAW_TURNKEY_SETUP_HOME/docker-ollama-com/configure-OpenClaw.ipynb /tmp/configure-OpenClaw.OUTPUT.ipynb
 
 docker compose up -d openclaw-gateway
 
