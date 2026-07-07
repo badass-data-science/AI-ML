@@ -79,24 +79,35 @@ def benjamini_hochberg_report(pair_p_values: dict[str, float], alpha: float = 0.
     }
 
 
-def _model_config_signature(run) -> str:
-    """Hash of every MLflow param logged for this run except `instrument`/
-    `granularity` (already captured by the pair label) and `run_uid` (unique per run
-    by construction — including it would make every single run its own
-    "configuration" and defeat the point). Two runs count as the SAME configuration
-    only if every other logged param matches exactly: architecture
-    (`number_of_cells_per_rnn_layer`/`number_of_cells_per_dense_layer`), activation
-    functions, epochs, batch size, regularization, dropout, learning rate — the full
-    `TrainParams` set logged in `train_and_evaluate`, not just layer count/width.
-    Whole-params equality, not a hand-picked subset, is the point: any change a human
-    might make between training attempts on the same pair should count as a distinct
-    hypothesis for the multiple-comparisons correction below, not just the ones we
-    thought to name.
+def config_signature_from_params(params: dict) -> str:
+    """Hash of every logged param except `instrument`/`granularity` (already captured
+    by the pair label) and `run_uid` (unique per run by construction — including it
+    would make every single run its own "configuration" and defeat the point). Two
+    runs count as the SAME configuration only if every other logged param matches
+    exactly: architecture (`number_of_cells_per_rnn_layer`/
+    `number_of_cells_per_dense_layer`), activation functions, epochs, batch size,
+    regularization, dropout, learning rate — the full `TrainParams` set logged in
+    `train_and_evaluate`, not just layer count/width. Whole-params equality, not a
+    hand-picked subset, is the point: any change a human might make between training
+    attempts on the same pair should count as a distinct hypothesis for the
+    multiple-comparisons correction below, not just the ones we thought to name.
+
+    Values are stringified before hashing: `run.data.params` (below) is always
+    already-stringified (MLflow stores every param as a string), but
+    `forex_ml.training.train` also calls this directly with the pre-logging dict of
+    native Python types, to tag a newly registered model version with the same
+    signature multiple_comparisons would later compute for its run — str()'ing both
+    call sites' values the same way keeps the two hashes identical for the same
+    configuration.
     """
     excluded = {"instrument", "granularity", "run_uid"}
-    items = sorted((k, v) for k, v in run.data.params.items() if k not in excluded)
+    items = sorted((k, str(v)) for k, v in params.items() if k not in excluded)
     payload = json.dumps(items, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()[:12]
+
+
+def _model_config_signature(run) -> str:
+    return config_signature_from_params(run.data.params)
 
 
 def _config_summary(run) -> str:

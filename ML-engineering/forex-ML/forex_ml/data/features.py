@@ -19,6 +19,13 @@ COLUMN_TIMESTAMP = "unix_epoch_s"
 COLUMNS_PARTITION = ["instrument", "granularity"]
 COLUMNS_Y = ["pd_lead", "spread_close_lead", "volatility_lead"]
 
+# Raw (unnormalized) price/spread columns kept around as reference data -- never fed
+# to the model as a feature (see select_xy_columns), but needed downstream by
+# forex-strategy's backtest to know the actual price a test-set row traded at and
+# the spread cost of trading it. Everything else in columns_base (mid_open/high/low,
+# volume) is still dropped; the model only ever sees the engineered features.
+COLUMNS_PASSTHROUGH = ["mid_close", "spread_close"]
+
 # Approximate UTC session windows (standard interbank FX convention: half-open
 # [start, end) hours). Fixed UTC hours, not DST-aware — London/New York local session
 # times shift by an hour twice a year, which this simplification ignores. Good enough
@@ -35,6 +42,7 @@ class FeatureColumns:
     columns_partition: list[str] = field(default_factory=lambda: list(COLUMNS_PARTITION))
     column_timestamp: str = COLUMN_TIMESTAMP
     columns_y: list[str] = field(default_factory=lambda: list(COLUMNS_Y))
+    columns_passthrough: list[str] = field(default_factory=lambda: list(COLUMNS_PASSTHROUGH))
 
     @property
     def columns_sort(self) -> list[str]:
@@ -145,7 +153,11 @@ def drop_raw_price_columns(
     training_and_testing: bool,
     cols: FeatureColumns = FeatureColumns(),
 ) -> DataFrame:
-    df = df.drop(*columns_base)
+    """Drops columns_base EXCEPT cols.columns_passthrough -- those survive as
+    reference data (see COLUMNS_PASSTHROUGH) rather than being dropped like the rest
+    of the raw OHLCV columns."""
+    to_drop = [c for c in columns_base if c not in cols.columns_passthrough]
+    df = df.drop(*to_drop)
     if training_and_testing:
         df = df.dropna()
     return df.orderBy(*cols.columns_sort)
@@ -173,7 +185,11 @@ def filter_incomplete_rows(
 
 
 def select_xy_columns(df: DataFrame, cols: FeatureColumns = FeatureColumns()) -> tuple[DataFrame, list[str]]:
-    to_select_sans_x = [*cols.columns_partition, cols.column_timestamp, *cols.columns_y]
+    """columns_passthrough is excluded from columns_x here (not a model input) but
+    still included in `to_select`, so it rides along as a flat, unwindowed reference
+    column through window_into_arrays (which only windows columns named in columns_x,
+    leaving everything else in the row untouched)."""
+    to_select_sans_x = [*cols.columns_partition, cols.column_timestamp, *cols.columns_y, *cols.columns_passthrough]
     columns_x = [c for c in df.columns if c not in to_select_sans_x]
     to_select = [*to_select_sans_x, *columns_x]
     df = df.orderBy(*cols.columns_sort).select(*to_select)

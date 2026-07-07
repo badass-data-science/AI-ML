@@ -261,6 +261,43 @@ Inspect runs with:
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
 
+### Finding "the model for (instrument, granularity)"
+
+Every pair registers under the same shared `train.mlflow_experiment_name` — the
+Model Registry has no per-pair identity of its own. Every registered model version is
+tagged at registration time with `instrument`, `granularity`, and `config_signature`
+(the same hash `forex_ml/evaluation/multiple_comparisons.py` uses to group runs by
+configuration), so the right version can be found via `MlflowClient.search_model_versions`
+without grepping the source run's logged params:
+
+```python
+from mlflow.tracking import MlflowClient
+
+client = MlflowClient(tracking_uri="sqlite:///mlflow.db")
+versions = client.search_model_versions(
+    "name = 'forex-lstm' and tags.instrument = 'EUR/USD' and tags.granularity = 'H1'"
+)
+```
+
+### Backtesting support
+
+The `<run_uid>_predictions.npz` artifact (see above) also carries the raw softmax
+probabilities (`lstm_pred_proba`) and the test split's timestamp/price/spread
+(`test_timestamp`/`test_price`/`test_spread`) alongside the existing correctness
+booleans used for McNemar's test. A correct/incorrect boolean is enough to compare
+two classifiers, but a real backtest (the sibling
+[`forex-strategy`](../forex-strategy) project) needs to know how confident the model
+was, and at what price and spread cost, to simulate whether a trade would actually
+have made money.
+
+The same three raw-price/spread fields are available directly on `Splits.test` (see
+`forex_ml/data/splitting.py`) via `COLUMNS_PASSTHROUGH` in `forex_ml/data/features.py`
+— `mid_close`/`spread_close` are the only two of the six raw OHLCV columns kept
+around after feature engineering, explicitly excluded from `columns_x` so they're
+never fed to the model, but carried through Stage 1/Stage 2 as reference data. Only
+the **test** split carries them (`train`/`val` stay exactly `{"M", "y"}`) since
+backtesting only ever needs to reconstruct P&L on the held-out set.
+
 ## Diagnostics
 
 ```bash

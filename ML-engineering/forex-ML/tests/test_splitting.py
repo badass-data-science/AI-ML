@@ -10,6 +10,9 @@ COLUMNS_X_COMPONENTS = ["feat_0", "feat_1", "feat_2"]
 
 
 def _make_pdf(n: int, n_back: int = 5, n_features: int = 3) -> pd.DataFrame:
+    """Stands in for what load_and_stack would have produced -- includes mid_close/
+    spread_close (see COLUMNS_PASSTHROUGH) since _build_splits reads them directly off
+    this frame to populate the test split's reference data."""
     rng = np.random.default_rng(0)
     timestamps = np.arange(n) * 3600
     X = rng.normal(size=(n, n_back, n_features))
@@ -19,6 +22,8 @@ def _make_pdf(n: int, n_back: int = 5, n_features: int = 3) -> pd.DataFrame:
         "unix_epoch_s": timestamps,
         "pd_lead": rng.normal(size=n),
         "X": list(X),
+        "mid_close": rng.normal(loc=1.1, scale=0.01, size=n),
+        "spread_close": rng.uniform(0.0001, 0.0005, size=n),
     })
 
 
@@ -117,7 +122,12 @@ def test_load_and_stack_produces_timesteps_by_features_shape(spark, tmp_path):
     df_time_series.write.parquet(str(ts_path))
     df_non_time_series.write.parquet(str(non_ts_path))
 
-    pdf, _ = load_and_stack(spark, str(ts_path), str(non_ts_path), ["feat_a", "feat_b"], "pd_lead")
+    # columns_passthrough=[]: this test is about the stacking UDF's axis order, not
+    # about mid_close/spread_close passthrough -- the synthetic frames above don't
+    # have those columns, so don't ask load_and_stack to select them.
+    pdf, _ = load_and_stack(
+        spark, str(ts_path), str(non_ts_path), ["feat_a", "feat_b"], "pd_lead", columns_passthrough=[],
+    )
 
     X = np.array(pdf.loc[0, "X"])
     assert X.shape == (n_back, 2)

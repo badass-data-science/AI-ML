@@ -27,6 +27,7 @@ from forex_ml.config import TrainParams, load_params
 from forex_ml.data.splitting import Splits
 from forex_ml.evaluation.baselines import majority_class_baseline, persistence_baseline
 from forex_ml.evaluation.class_balance import class_balance
+from forex_ml.evaluation.multiple_comparisons import config_signature_from_params
 from forex_ml.paths import pair_key, splits_npz_path
 from forex_ml.training.model import build_lstm_regressor, compile_model, configure_gpu_memory_growth
 
@@ -115,8 +116,8 @@ def train_and_evaluate(
     if run_name_suffix:
         run_name = f"{run_name}_{run_name_suffix}"
 
-    with mlflow.start_run(run_name=run_name):
-        mlflow.log_params({
+    with mlflow.start_run(run_name=run_name) as run:
+        logged_params = {
             "instrument": instrument,
             "granularity": granularity,
             "run_uid": run_uid,
@@ -124,7 +125,8 @@ def train_and_evaluate(
             "lookahead": lookahead,
             **params.model_dump(exclude={"mlflow_experiment_name", "mlflow_tracking_uri"}),
             **(extra_params or {}),
-        })
+        }
+        mlflow.log_params(logged_params)
 
         # Cheap regime-drift check, logged before training even starts: train's class
         # balance is close to even by construction (thresholds come from train
@@ -170,7 +172,14 @@ def train_and_evaluate(
         # baseline on the SAME test rows, rather than treating them as independent
         # samples. lstm_correct and majority_correct are aligned 1:1 with the full
         # test set; persistence_correct is one row shorter (see persistence_baseline).
-        lstm_pred_idx = np.argmax(model.predict(splits.test["M"], verbose=0), axis=1)
+        #
+        # Also saved: the raw softmax probabilities (not just top-1 correctness) and
+        # the test row's timestamp/price/spread from splits.test (see
+        # forex_ml.data.splitting.Splits) -- a real backtest (forex-strategy) needs
+        # "how confident was the model, at what price, at what spread cost" per row,
+        # which a correct/incorrect boolean alone can't answer.
+        lstm_pred_proba = model.predict(splits.test["M"], verbose=0)
+        lstm_pred_idx = np.argmax(lstm_pred_proba, axis=1)
         lstm_true_idx = np.argmax(splits.test["y"], axis=1)
         predictions_path = model_dir / f"{run_uid}_predictions.npz"
         np.savez_compressed(
@@ -178,13 +187,28 @@ def train_and_evaluate(
             lstm_correct=(lstm_pred_idx == lstm_true_idx),
             majority_correct=majority_result["correct"],
             persistence_correct=persistence_result["correct"],
+            lstm_pred_proba=lstm_pred_proba,
+            test_timestamp=splits.test["timestamp"],
+            test_price=splits.test["price"],
+            test_spread=splits.test["spread"],
         )
         mlflow.log_artifact(str(predictions_path))
 
+        mlflow.keras.log_model(model, name="model")
         if register_model:
-            mlflow.keras.log_model(model, name="model", registered_model_name=params.mlflow_experiment_name)
-        else:
-            mlflow.keras.log_model(model, name="model")
+            # Tag the registered model version with instrument/granularity/config
+            # signature (the same hash forex_ml.evaluation.multiple_comparisons uses
+            # to group runs) so forex-strategy can look up "the model for
+            # (instrument, granularity, config)" directly via MlflowClient, instead of
+            # grepping every version's source run params -- the registry itself has
+            # no per-pair identity otherwise (every pair registers under the same
+            # shared `params.mlflow_experiment_name`).
+            config_sig = config_signature_from_params(logged_params)
+            mlflow.register_model(
+                model_uri=f"runs:/{run.info.run_id}/model",
+                name=params.mlflow_experiment_name,
+                tags={"instrument": instrument, "granularity": granularity, "config_signature": config_sig},
+            )
 
         history_path = model_dir / f"{run_uid}_history.json"
         history_path.write_text(json.dumps(history.history, indent=2))

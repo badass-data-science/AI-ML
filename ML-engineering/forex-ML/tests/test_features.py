@@ -76,10 +76,17 @@ def test_engineer_features_produces_full_n_back_windows(spark, synthetic_candles
     for col in columns_x:
         assert all(len(row) == n_back for row in pdf[col])
 
-    # the raw OHLCV columns must be gone; engineered columns must remain
-    for col in ["mid_open", "mid_high", "mid_low", "mid_close", "spread_close", "volume"]:
+    # most raw OHLCV columns must be gone; engineered columns must remain
+    for col in ["mid_open", "mid_high", "mid_low", "volume"]:
         assert col not in df_non_time_series.columns
     assert "pd_lead" in df_non_time_series.columns
+
+    # mid_close/spread_close are the exception (see COLUMNS_PASSTHROUGH): kept as
+    # reference data for backtesting, but never fed to the model as a feature.
+    assert "mid_close" in df_non_time_series.columns
+    assert "spread_close" in df_non_time_series.columns
+    assert "mid_close" not in columns_x
+    assert "spread_close" not in columns_x
 
 
 def test_window_into_arrays_preserves_chronological_order_oldest_first(spark, synthetic_candles):

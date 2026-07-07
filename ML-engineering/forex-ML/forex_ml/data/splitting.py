@@ -18,6 +18,8 @@ import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 from pyspark.sql.types import ArrayType, FloatType
 
+from forex_ml.data.features import COLUMNS_PASSTHROUGH
+
 def _stack_time_series_fn(*series: list[float]) -> list[list[float]]:
     """Stack per-feature n_back-length arrays into one (n_back, num_features) matrix
     per row — timesteps first, then features, matching the (timesteps, features)
@@ -46,12 +48,18 @@ def load_and_stack(
     non_time_series_parquet_path: str,
     columns_x: list[str],
     column_y: str,
+    columns_passthrough: list[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load Stage-1 Parquet outputs and stack the per-feature arrays in `columns_x`
     order into a single 'X' matrix column per row. Column order here MUST match the
     `columns_x` order passed to TimeSeriesSplitter later — the X array's feature axis
     has no column names, only positions.
+
+    `columns_passthrough` (default: COLUMNS_PASSTHROUGH, i.e. mid_close/spread_close)
+    are carried through unchanged alongside X/y -- never fed to the model, but needed
+    by TimeSeriesSplitter to attach the test split's raw price/spread for backtesting.
     """
+    columns_passthrough = list(COLUMNS_PASSTHROUGH) if columns_passthrough is None else columns_passthrough
     columns_non_time_series_to_keep = ["instrument", "granularity", "unix_epoch_s", *columns_x]
 
     df_time_series = spark.read.parquet(time_series_parquet_path)
@@ -65,7 +73,7 @@ def load_and_stack(
     df_time_series = (
         df_time_series
         .withColumn("X", _stack_time_series(*column_objects))
-        .select("instrument", "granularity", "unix_epoch_s", column_y, "X")
+        .select("instrument", "granularity", "unix_epoch_s", column_y, "X", *columns_passthrough)
         .orderBy("instrument", "granularity", "unix_epoch_s")
     )
 
@@ -89,13 +97,20 @@ class Splits:
     def save_npz(self, path: str | Path) -> None:
         """Replaces the original pickle.dump(...) — .npz is a zip of plain .npy arrays,
         so loading it can't execute arbitrary code, and per-pair files stay small
-        instead of one shared, unversioned 684MB pickle."""
+        instead of one shared, unversioned 684MB pickle.
+
+        `test` carries three extra keys (timestamp/price/spread) that train/val don't
+        -- a backtest only ever needs to reconstruct P&L on the held-out test set, so
+        train/val stay exactly {"M", "y"} rather than carrying reference data nothing
+        reads.
+        """
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(
             path,
             train_M=self.train["M"], train_y=self.train["y"],
             val_M=self.val["M"], val_y=self.val["y"],
             test_M=self.test["M"], test_y=self.test["y"],
+            test_timestamp=self.test["timestamp"], test_price=self.test["price"], test_spread=self.test["spread"],
         )
 
     @classmethod
@@ -104,7 +119,10 @@ class Splits:
         return cls(
             train={"M": data["train_M"], "y": data["train_y"]},
             val={"M": data["val_M"], "y": data["val_y"]},
-            test={"M": data["test_M"], "y": data["test_y"]},
+            test={
+                "M": data["test_M"], "y": data["test_y"],
+                "timestamp": data["test_timestamp"], "price": data["test_price"], "spread": data["test_spread"],
+            },
         )
 
 
@@ -312,7 +330,17 @@ class TimeSeriesSplitter:
         return Splits(
             train={"M": X_train_norm, "y": y_train},
             val={"M": X_val_norm, "y": y_val},
-            test={"M": X_test_norm, "y": y_test},
+            test={
+                "M": X_test_norm, "y": y_test,
+                # Raw (unnormalized) reference data for the test split only -- a
+                # backtest needs the actual timestamp/price/spread a row traded at,
+                # not the train-normalized feature values used for prediction. See
+                # COLUMNS_PASSTHROUGH in forex_ml.data.features for how these survive
+                # Stage 1 without becoming model input features.
+                "timestamp": df_test[self.timestamp_column].to_numpy(),
+                "price": df_test["mid_close"].to_numpy(),
+                "spread": df_test["spread_close"].to_numpy(),
+            },
         )
 
     def split_train_val_test_by_proportion(self, train_val_proportion: list[float], purge_bars: int = 0) -> Splits:

@@ -25,7 +25,13 @@ def _make_splits(n_back: int = 10, n_features: int = 3, n_classes: int = 3) -> S
         y = np.eye(n_classes, dtype="float32")[y_idx]
         return {"M": M, "y": y}
 
-    return Splits(train=_one(40), val=_one(10), test=_one(10))
+    test = _one(10)
+    n_test = test["y"].shape[0]
+    test["timestamp"] = np.arange(n_test, dtype="float64")
+    test["price"] = rng.normal(loc=1.1, scale=0.01, size=n_test).astype("float64")
+    test["spread"] = rng.uniform(0.0001, 0.0005, size=n_test).astype("float64")
+
+    return Splits(train=_one(40), val=_one(10), test=test)
 
 
 def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
@@ -82,3 +88,20 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
 
     registered = client.search_registered_models(filter_string="name = 'test-experiment'")
     assert len(registered) == 1
+
+    versions = client.search_model_versions("name = 'test-experiment'")
+    assert len(versions) == 1
+    assert versions[0].tags["instrument"] == "EUR/USD"
+    assert versions[0].tags["granularity"] == "H1"
+    assert versions[0].tags["config_signature"]
+
+    artifact_dir = tmp_path / "downloaded_artifacts"
+    predictions_path = next(
+        p for p in client.list_artifacts(run.info.run_id) if p.path.endswith("_predictions.npz")
+    ).path
+    local_path = client.download_artifacts(run.info.run_id, predictions_path, str(artifact_dir))
+    predictions = np.load(local_path)
+    assert predictions["lstm_pred_proba"].shape == (10, 3)
+    np.testing.assert_array_equal(predictions["test_timestamp"], splits.test["timestamp"])
+    np.testing.assert_array_equal(predictions["test_price"], splits.test["price"])
+    np.testing.assert_array_equal(predictions["test_spread"], splits.test["spread"])
