@@ -282,21 +282,22 @@ versions = client.search_model_versions(
 ### Backtesting support
 
 The `<run_uid>_predictions.npz` artifact (see above) also carries the raw softmax
-probabilities (`lstm_pred_proba`) and the test split's timestamp/price/spread
-(`test_timestamp`/`test_price`/`test_spread`) alongside the existing correctness
-booleans used for McNemar's test. A correct/incorrect boolean is enough to compare
-two classifiers, but a real backtest (the sibling
+probabilities (`lstm_pred_proba`) and the test split's timestamp/price/spread/raw
+target value (`test_timestamp`/`test_price`/`test_spread`/`test_y_raw`) alongside the
+existing correctness booleans used for McNemar's test. A correct/incorrect boolean is
+enough to compare two classifiers, but a real backtest (the sibling
 [`forex-strategy`](../forex-strategy) project) needs to know how confident the model
-was, and at what price and spread cost, to simulate whether a trade would actually
-have made money.
+was, at what price and spread cost, and what actually happened (the realized % move,
+not just which tercile it landed in) to compute actual P&L, not just accuracy.
 
-The same three raw-price/spread fields are available directly on `Splits.test` (see
-`forex_ml/data/splitting.py`) via `COLUMNS_PASSTHROUGH` in `forex_ml/data/features.py`
-— `mid_close`/`spread_close` are the only two of the six raw OHLCV columns kept
-around after feature engineering, explicitly excluded from `columns_x` so they're
-never fed to the model, but carried through Stage 1/Stage 2 as reference data. Only
-the **test** split carries them (`train`/`val` stay exactly `{"M", "y"}`) since
-backtesting only ever needs to reconstruct P&L on the held-out set.
+The same four raw fields are available directly on `Splits.test` (see
+`forex_ml/data/splitting.py`) — `price`/`spread` via `COLUMNS_PASSTHROUGH` in
+`forex_ml/data/features.py` (`mid_close`/`spread_close` are the only two of the six
+raw OHLCV columns kept around after feature engineering, explicitly excluded from
+`columns_x` so they're never fed to the model), and `y_raw` is simply the
+undiscretized `column_y` value before `TimeSeriesSplitter` bins it into a class. Only
+the **test** split carries any of this (`train`/`val` stay exactly `{"M", "y"}`)
+since backtesting only ever needs to reconstruct P&L on the held-out set.
 
 ## Diagnostics
 

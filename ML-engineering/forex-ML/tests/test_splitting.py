@@ -83,6 +83,22 @@ def test_npz_round_trip(tmp_path):
     np.testing.assert_array_equal(splits.train["M"], loaded.train["M"])
     np.testing.assert_array_equal(splits.val["y"], loaded.val["y"])
     np.testing.assert_array_equal(splits.test["M"], loaded.test["M"])
+    np.testing.assert_array_equal(splits.test["timestamp"], loaded.test["timestamp"])
+    np.testing.assert_array_equal(splits.test["price"], loaded.test["price"])
+    np.testing.assert_array_equal(splits.test["spread"], loaded.test["spread"])
+    np.testing.assert_array_equal(splits.test["y_raw"], loaded.test["y_raw"])
+
+
+def test_test_split_y_raw_matches_the_undiscretized_column_y_value():
+    """y_raw must be the actual pd_lead value, not just which tercile it fell into --
+    a backtest computing $ P&L needs the realized magnitude, which "outcome"/"y" (the
+    one-hot class) discards by construction."""
+    splitter = _splitter(100)
+    splits = splitter.split_train_val_test_by_proportion([0.7, 0.15])
+
+    lookup = splitter.df.set_index("unix_epoch_s")["pd_lead"]
+    expected = lookup.loc[splits.test["timestamp"]].to_numpy()
+    np.testing.assert_array_equal(splits.test["y_raw"], expected)
 
 
 def test_load_and_stack_produces_timesteps_by_features_shape(spark, tmp_path):

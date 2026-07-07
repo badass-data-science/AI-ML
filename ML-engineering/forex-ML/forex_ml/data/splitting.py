@@ -99,10 +99,10 @@ class Splits:
         so loading it can't execute arbitrary code, and per-pair files stay small
         instead of one shared, unversioned 684MB pickle.
 
-        `test` carries three extra keys (timestamp/price/spread) that train/val don't
-        -- a backtest only ever needs to reconstruct P&L on the held-out test set, so
-        train/val stay exactly {"M", "y"} rather than carrying reference data nothing
-        reads.
+        `test` carries four extra keys (timestamp/price/spread/y_raw) that train/val
+        don't -- a backtest only ever needs to reconstruct P&L on the held-out test
+        set, so train/val stay exactly {"M", "y"} rather than carrying reference data
+        nothing reads.
         """
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(
@@ -111,6 +111,7 @@ class Splits:
             val_M=self.val["M"], val_y=self.val["y"],
             test_M=self.test["M"], test_y=self.test["y"],
             test_timestamp=self.test["timestamp"], test_price=self.test["price"], test_spread=self.test["spread"],
+            test_y_raw=self.test["y_raw"],
         )
 
     @classmethod
@@ -122,6 +123,7 @@ class Splits:
             test={
                 "M": data["test_M"], "y": data["test_y"],
                 "timestamp": data["test_timestamp"], "price": data["test_price"], "spread": data["test_spread"],
+                "y_raw": data["test_y_raw"],
             },
         )
 
@@ -340,6 +342,11 @@ class TimeSeriesSplitter:
                 "timestamp": df_test[self.timestamp_column].to_numpy(),
                 "price": df_test["mid_close"].to_numpy(),
                 "spread": df_test["spread_close"].to_numpy(),
+                # The undiscretized column_y value itself (e.g. the realized %
+                # pd_lead), not just which tercile it fell into -- "outcome"/"y" tells
+                # you the model's classification target, but a backtest computing
+                # actual $ P&L needs the realized magnitude, which binning discards.
+                "y_raw": df_test[self.column_y].to_numpy(),
             },
         )
 

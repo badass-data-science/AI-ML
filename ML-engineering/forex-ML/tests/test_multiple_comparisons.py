@@ -74,6 +74,7 @@ def _make_splits(seed: int, n_back: int = 10, n_features: int = 3, n_classes: in
     test["timestamp"] = np.arange(n_test, dtype="float64")
     test["price"] = rng.normal(loc=1.1, scale=0.01, size=n_test).astype("float64")
     test["spread"] = rng.uniform(0.0001, 0.0005, size=n_test).astype("float64")
+    test["y_raw"] = rng.normal(size=n_test).astype("float64")
 
     return Splits(train=_one(40), val=_one(10), test=test)
 
