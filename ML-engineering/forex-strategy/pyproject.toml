@@ -9,6 +9,8 @@ dependencies = [
     "mlflow>=2.14",
     "pydantic>=2.0",
     "pyyaml>=6.0",
+    "tensorflow[and-cuda]>=2.16",
+    "keras>=3.0",
     "forex-ml-training",
 ]
 

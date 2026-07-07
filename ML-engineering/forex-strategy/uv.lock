@@ -1132,12 +1132,14 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "forex-ml-training" },
+    { name = "keras" },
     { name = "mlflow" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pandas" },
     { name = "pydantic" },
     { name = "pyyaml" },
+    { name = "tensorflow", extra = ["and-cuda"] },
 ]
 
 [package.optional-dependencies]
@@ -1151,6 +1153,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "forex-ml-training", editable = "../forex-ML" },
+    { name = "keras", specifier = ">=3.0" },
     { name = "mlflow", specifier = ">=2.14" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "numpy", specifier = ">=1.26" },
@@ -1160,6 +1163,7 @@ requires-dist = [
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.12" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
+    { name = "tensorflow", extras = ["and-cuda"], specifier = ">=2.16" },
 ]
 provides-extras = ["dev"]
 
