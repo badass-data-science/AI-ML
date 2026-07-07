@@ -9,8 +9,43 @@ from __future__ import annotations
 import tensorflow as tf
 from keras import Sequential, layers, regularizers
 from keras.optimizers import Adam
+from keras.saving import register_keras_serializable
 
 from forex_ml.config import TrainParams
+
+
+@register_keras_serializable(package="forex_ml")
+class ClipInputs(layers.Layer):
+    """Clips inputs to [-clip_value, clip_value] before the first LSTM layer.
+
+    Gradient clipping (see compile_model's clipnorm) only bounds the BACKWARD pass --
+    it can't help if the FORWARD pass itself produces Inf/NaN, which is exactly what
+    happens when a single extreme input value compounds through many unrolled LSTM
+    timesteps across several stacked layers. This isn't hypothetical here: fat-tailed
+    features like `return`/`volatility` have thousands of >10-sigma values in the
+    real training data, and a real n_back=200 training run went to NaN mid-epoch
+    (once at epoch 1, again at epoch 13 even with clipnorm already in place) before
+    this was added. Clipping the input directly removes the mechanism that causes
+    that, independent of and complementary to gradient clipping -- not a replacement
+    for it, since clipnorm still bounds how aggressively the model can react to a
+    clipped-but-still-large input.
+
+    A proper Layer subclass (not a bare Lambda) so it serializes/deserializes
+    correctly through keras.models.load_model() -- ModelCheckpoint saves and later
+    reloads this exact architecture.
+    """
+
+    def __init__(self, clip_value: float, **kwargs):
+        super().__init__(**kwargs)
+        self.clip_value = clip_value
+
+    def call(self, inputs):
+        return tf.clip_by_value(inputs, -self.clip_value, self.clip_value)
+
+    def get_config(self):
+        config = super().get_config()
+        config["clip_value"] = self.clip_value
+        return config
 
 
 def configure_gpu_memory_growth() -> None:
@@ -34,29 +69,18 @@ def configure_gpu_memory_growth() -> None:
 
 def build_lstm_regressor(params: TrainParams, input_shape: tuple[int, int], num_outputs: int) -> Sequential:
     model = Sequential()
+    model.add(ClipInputs(params.input_clip_value, input_shape=input_shape))
 
-    for i, n_units in enumerate(params.number_of_cells_per_rnn_layer):
-        if i == 0:
-            model.add(
-                layers.LSTM(
-                    n_units,
-                    activation=params.lstm_activation_function,
-                    return_sequences=True,
-                    input_shape=input_shape,
-                    dropout=params.rnn_dropout_rate,
-                    recurrent_dropout=params.rnn_recurrent_dropout_rate,
-                )
+    for n_units in params.number_of_cells_per_rnn_layer:
+        model.add(
+            layers.LSTM(
+                n_units,
+                activation=params.lstm_activation_function,
+                return_sequences=True,
+                dropout=params.rnn_dropout_rate,
+                recurrent_dropout=params.rnn_recurrent_dropout_rate,
             )
-        else:
-            model.add(
-                layers.LSTM(
-                    n_units,
-                    activation=params.lstm_activation_function,
-                    return_sequences=True,
-                    dropout=params.rnn_dropout_rate,
-                    recurrent_dropout=params.rnn_recurrent_dropout_rate,
-                )
-            )
+        )
 
     model.add(layers.Flatten())
     model.add(layers.BatchNormalization(momentum=params.batch_normalization_momentum))

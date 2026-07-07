@@ -110,7 +110,7 @@ future inputs at inference time, but the two adjacent rows are highly autocorrel
 which can optimistically bias the validation/test metric right at the seam (see
 Lopez de Prado's *purged k-fold CV* for the general technique).
 
-### Gradient clipping
+### Gradient and input clipping
 
 `train.gradient_clip_norm` (default `1.0`, applied as `clipnorm` on the Adam
 optimizer in `forex_ml/training/model.py`) bounds the gradient norm on every training
@@ -128,6 +128,27 @@ original notebooks, and every test/config this pipeline had run before, used sma
 `n_back` values or smaller-scale data, shallow enough that exploding gradients never
 actually happened to trigger. It took training on real, full-history data at the
 pipeline's actual configured `n_back=200` to hit it for the first time.
+
+Gradient clipping alone turned out not to be enough. A retry with `clipnorm=1.0` ran
+12 clean epochs, then went to NaN again mid-epoch-13 — later, but not eliminated. The
+reason: `clipnorm` only bounds the *backward* pass (already-computed gradients). If the
+*forward* pass itself overflows to `Inf`/`NaN` — which is exactly what a single
+extreme input value does after compounding through 200 unrolled LSTM timesteps across
+5 stacked layers — the resulting gradient is `NaN` before clipping ever sees it, and
+`clip(NaN)` is still `NaN`. This isn't hypothetical: the real, z-scored training data
+has **thousands of values beyond 10 standard deviations** in every non-cyclical
+feature (`volatility`, `return`, `diff_spread_close`, `diff_volume`), consistent with
+the heavy tails (`return` kurtosis ≈ 17) found in the ACF diagnostics.
+
+`train.input_clip_value` (default `10.0`) fixes this at the source: `ClipInputs`
+(`forex_ml/training/model.py`) is a real `keras.layers.Layer` subclass — not a bare
+`Lambda`, so it serializes/deserializes correctly through `keras.models.load_model()`,
+since `ModelCheckpoint` saves and later reloads this exact architecture — inserted as
+the *first* layer of the model, clipping every input to `[-10, 10]` before it ever
+reaches the first LSTM. This is complementary to gradient clipping, not a replacement
+for it: `clipnorm` still bounds how aggressively the model can react to a
+clipped-but-still-large value; `input_clip_value` bounds how large that value can be
+in the first place.
 
 ## Running a single pair
 

@@ -79,6 +79,7 @@ class TrainParams(BaseModel):
     reduce_lr_on_plateau_patience: int
     early_stopping_patience: int
     gradient_clip_norm: float = 1.0
+    input_clip_value: float = 10.0
     tensorflow_seed: int
     mlflow_experiment_name: str
     mlflow_tracking_uri: str

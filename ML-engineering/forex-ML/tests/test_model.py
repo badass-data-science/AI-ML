@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from forex_ml.config import TrainParams
-from forex_ml.training.model import build_lstm_regressor, compile_model, configure_gpu_memory_growth
+from forex_ml.training.model import ClipInputs, build_lstm_regressor, compile_model, configure_gpu_memory_growth
 
 
 def _minimal_train_params(**overrides) -> TrainParams:
@@ -41,8 +41,8 @@ def test_model_output_shape_matches_config():
     compile_model(model, params)
 
     assert model.output_shape == (None, 3)
-    # 2 LSTM layers + Flatten + BatchNorm + (Dense + BatchNorm + Dropout) + final Dense
-    assert len(model.layers) == 8
+    # ClipInputs + 2 LSTM layers + Flatten + BatchNorm + (Dense + BatchNorm + Dropout) + final Dense
+    assert len(model.layers) == 9
 
 
 def test_model_forward_pass_produces_valid_softmax_output():
@@ -62,6 +62,38 @@ def test_single_rnn_layer_config_also_builds():
     model = build_lstm_regressor(params, input_shape=(5, 2), num_outputs=3)
     compile_model(model, params)
     assert model.output_shape == (None, 3)
+
+
+def test_clip_inputs_clamps_extreme_values_and_passes_normal_ones_through():
+    """Regression test for the real bug this guards against: a >10-sigma input value
+    (real and common in this data -- see the fat-tailed return/volatility columns)
+    compounding through many unrolled LSTM timesteps overflowed to Inf/NaN in the
+    forward pass, which gradient clipping (a backward-pass-only fix) couldn't
+    prevent. clip_value=5 here for a clean, easy-to-check boundary."""
+    layer = ClipInputs(clip_value=5.0)
+    x = np.array([[-19.7, -5.0, -1.0, 0.0, 1.0, 5.0, 19.7]], dtype="float32")
+    out = layer(x).numpy()
+    np.testing.assert_allclose(out, [[-5.0, -5.0, -1.0, 0.0, 1.0, 5.0, 5.0]])
+
+
+def test_clip_inputs_survives_save_and_load_round_trip(tmp_path):
+    """The whole point of a real Layer subclass instead of a bare Lambda: it must
+    serialize/deserialize correctly through keras.models.load_model(), since
+    ModelCheckpoint saves and later reloads this exact architecture in
+    train_and_evaluate()."""
+    import keras
+
+    params = _minimal_train_params(input_clip_value=3.0)
+    model = build_lstm_regressor(params, input_shape=(5, 2), num_outputs=3)
+    compile_model(model, params)
+
+    path = tmp_path / "model.keras"
+    model.save(path)
+    reloaded = keras.models.load_model(path)
+
+    clip_layer = reloaded.layers[0]
+    assert isinstance(clip_layer, ClipInputs)
+    assert clip_layer.clip_value == 3.0
 
 
 def test_configure_gpu_memory_growth_is_safe_to_call_repeatedly():
