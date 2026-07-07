@@ -122,10 +122,15 @@ def prepare_data_flow(instrument: str, granularity: str, params_path: str | None
     # Spark's stock default (1g driver memory) OOMs on real full-history production
     # data (verified against synthetic ~300-row test data only, which never exercised
     # this) -- the windowing/moving-average feature engineering materializes array
-    # columns per row across the whole pair's history in the driver JVM.
+    # columns per row across the whole pair's history in the driver JVM. The original
+    # prepare-training-and-inference-data.ipynb (this flow's notebook predecessor) set
+    # driver/executor memory and maxResultSize to 70G explicitly -- that config simply
+    # got dropped during the port to a package, not something nobody had considered.
     spark = (
         SparkSession.builder.appName("forex-ml-prepare-data")
-        .config("spark.driver.memory", "8g")
+        .config("spark.driver.memory", "70g")
+        .config("spark.executor.memory", "70g")
+        .config("spark.driver.maxResultSize", "70g")
         .getOrCreate()
     )
     pdf = pull_candles_task(instrument, granularity, params.feature)

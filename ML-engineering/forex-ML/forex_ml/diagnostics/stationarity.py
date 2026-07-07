@@ -143,7 +143,9 @@ def main() -> None:
     # See forex_ml.flows.prepare_data_flow's driver-memory note -- same reason, same fix.
     spark = (
         SparkSession.builder.appName("forex-ml-stationarity-diagnostic")
-        .config("spark.driver.memory", "8g")
+        .config("spark.driver.memory", "70g")
+        .config("spark.executor.memory", "70g")
+        .config("spark.driver.maxResultSize", "70g")
         .getOrCreate()
     )
 

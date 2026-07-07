@@ -64,10 +64,15 @@ def load_split_and_save_task(
 def split_flow(instrument: str, granularity: str, params_path: str | None = None) -> str:
     """Does NOT stop the SparkSession — see prepare_data_flow's docstring for why."""
     params = load_params(params_path) if params_path else load_params()
-    # See prepare_data_flow's driver-memory note -- same reason, same fix.
+    # See prepare_data_flow's driver-memory note -- same reason, same fix. This flow's
+    # notebook predecessor, prepare-ml-ts-data.ipynb, set driver/executor memory and
+    # maxResultSize to 100G explicitly (the stacking step here builds one (n_back,
+    # num_features) array per row, across the whole pair's history).
     spark = (
         SparkSession.builder.appName("forex-ml-split-data")
-        .config("spark.driver.memory", "8g")
+        .config("spark.driver.memory", "100g")
+        .config("spark.executor.memory", "100g")
+        .config("spark.driver.maxResultSize", "100g")
         .getOrCreate()
     )
     return load_split_and_save_task(
