@@ -140,7 +140,12 @@ def main() -> None:
     args = parser.parse_args()
 
     params = load_params(args.params) if args.params else load_params()
-    spark = SparkSession.builder.appName("forex-ml-stationarity-diagnostic").getOrCreate()
+    # See forex_ml.flows.prepare_data_flow's driver-memory note -- same reason, same fix.
+    spark = (
+        SparkSession.builder.appName("forex-ml-stationarity-diagnostic")
+        .config("spark.driver.memory", "8g")
+        .getOrCreate()
+    )
 
     results = check_pair_stationarity(
         spark, params.feature.output_dir, args.instrument, args.granularity,

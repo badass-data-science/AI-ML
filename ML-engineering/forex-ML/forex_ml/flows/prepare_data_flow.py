@@ -119,7 +119,15 @@ def prepare_data_flow(instrument: str, granularity: str, params_path: str | None
     process. Session lifecycle is the caller/process's responsibility; on a one-shot
     CLI run the JVM tears down naturally when the process exits."""
     params = load_params(params_path) if params_path else load_params()
-    spark = SparkSession.builder.appName("forex-ml-prepare-data").getOrCreate()
+    # Spark's stock default (1g driver memory) OOMs on real full-history production
+    # data (verified against synthetic ~300-row test data only, which never exercised
+    # this) -- the windowing/moving-average feature engineering materializes array
+    # columns per row across the whole pair's history in the driver JVM.
+    spark = (
+        SparkSession.builder.appName("forex-ml-prepare-data")
+        .config("spark.driver.memory", "8g")
+        .getOrCreate()
+    )
     pdf = pull_candles_task(instrument, granularity, params.feature)
     return engineer_and_save_task(spark, pdf, instrument, granularity, params.feature)
 

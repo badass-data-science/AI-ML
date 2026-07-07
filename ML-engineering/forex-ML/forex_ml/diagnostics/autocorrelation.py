@@ -143,7 +143,12 @@ def main() -> None:
     args = parser.parse_args()
 
     params = load_params(args.params) if args.params else load_params()
-    spark = SparkSession.builder.appName("forex-ml-acf-pacf-diagnostic").getOrCreate()
+    # See forex_ml.flows.prepare_data_flow's driver-memory note -- same reason, same fix.
+    spark = (
+        SparkSession.builder.appName("forex-ml-acf-pacf-diagnostic")
+        .config("spark.driver.memory", "8g")
+        .getOrCreate()
+    )
 
     result = diagnose_pair(
         spark, params.feature.output_dir, args.instrument, args.granularity,

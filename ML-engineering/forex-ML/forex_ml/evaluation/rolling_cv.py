@@ -192,7 +192,12 @@ def main() -> None:
     parser.add_argument("--params", default=None, help="Path to params.yaml (default: repo root)")
     args = parser.parse_args()
 
-    spark = SparkSession.builder.appName("forex-ml-rolling-cv").getOrCreate()
+    # See forex_ml.flows.prepare_data_flow's driver-memory note -- same reason, same fix.
+    spark = (
+        SparkSession.builder.appName("forex-ml-rolling-cv")
+        .config("spark.driver.memory", "8g")
+        .getOrCreate()
+    )
     report = run_rolling_cv(
         spark, args.instrument, args.granularity, args.n_folds,
         args.min_train_bars, args.val_bars, args.test_bars,

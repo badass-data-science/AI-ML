@@ -64,7 +64,12 @@ def load_split_and_save_task(
 def split_flow(instrument: str, granularity: str, params_path: str | None = None) -> str:
     """Does NOT stop the SparkSession — see prepare_data_flow's docstring for why."""
     params = load_params(params_path) if params_path else load_params()
-    spark = SparkSession.builder.appName("forex-ml-split-data").getOrCreate()
+    # See prepare_data_flow's driver-memory note -- same reason, same fix.
+    spark = (
+        SparkSession.builder.appName("forex-ml-split-data")
+        .config("spark.driver.memory", "8g")
+        .getOrCreate()
+    )
     return load_split_and_save_task(
         spark, instrument, granularity,
         params.feature.n_back, params.feature.lookahead,
