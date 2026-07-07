@@ -4,10 +4,8 @@
 Run ad-hoc:
     python -m forex_ml.flows.prepare_data_flow --instrument EUR/USD --granularity H1
 
-Spark memory/executor tuning is deliberately not hardcoded here (the original
-notebooks hardcoded 70G/100G executor+driver memory, which only made sense on one
-specific workstation) — configure it externally via spark-defaults.conf or
-SPARK_* environment variables for your own hardware.
+Spark memory sizing is a `--spark-memory` CLI option (default 70g) rather than
+hardcoded -- see forex_ml.spark_session for why.
 """
 
 from __future__ import annotations
@@ -24,6 +22,7 @@ from forex_ml.config import FeatureParams, load_params
 from forex_ml.data import influx_source
 from forex_ml.data.features import engineer_features
 from forex_ml.paths import non_time_series_parquet_path, pair_key, stage1_config_path, time_series_parquet_path
+from forex_ml.spark_session import DEFAULT_SPARK_MEMORY, build_spark_session
 
 
 @task(name="pull-candles", retries=3, retry_delay_seconds=30)
@@ -112,27 +111,16 @@ def engineer_and_save_task(spark: SparkSession, pdf, instrument: str, granularit
 
 
 @flow(name="forex-ml-prepare-data", log_prints=True)
-def prepare_data_flow(instrument: str, granularity: str, params_path: str | None = None) -> str:
+def prepare_data_flow(
+    instrument: str, granularity: str, params_path: str | None = None, spark_memory: str = DEFAULT_SPARK_MEMORY,
+) -> str:
     """Does NOT stop the SparkSession it gets/creates — a JVM only ever has one active
     SparkContext, so stopping it here would kill it out from under any other flow
     (prepare_all_flow, serve.py's retrain loop) or test fixture sharing the same
     process. Session lifecycle is the caller/process's responsibility; on a one-shot
     CLI run the JVM tears down naturally when the process exits."""
     params = load_params(params_path) if params_path else load_params()
-    # Spark's stock default (1g driver memory) OOMs on real full-history production
-    # data (verified against synthetic ~300-row test data only, which never exercised
-    # this) -- the windowing/moving-average feature engineering materializes array
-    # columns per row across the whole pair's history in the driver JVM. The original
-    # prepare-training-and-inference-data.ipynb (this flow's notebook predecessor) set
-    # driver/executor memory and maxResultSize to 70G explicitly -- that config simply
-    # got dropped during the port to a package, not something nobody had considered.
-    spark = (
-        SparkSession.builder.appName("forex-ml-prepare-data")
-        .config("spark.driver.memory", "70g")
-        .config("spark.executor.memory", "70g")
-        .config("spark.driver.maxResultSize", "70g")
-        .getOrCreate()
-    )
+    spark = build_spark_session("forex-ml-prepare-data", memory=spark_memory)
     pdf = pull_candles_task(instrument, granularity, params.feature)
     return engineer_and_save_task(spark, pdf, instrument, granularity, params.feature)
 
@@ -142,8 +130,12 @@ def main() -> None:
     parser.add_argument("--instrument", required=True, help="e.g. EUR/USD")
     parser.add_argument("--granularity", required=True, help="e.g. H1")
     parser.add_argument("--params", default=None, help="Path to params.yaml (default: repo root)")
+    parser.add_argument(
+        "--spark-memory", default=DEFAULT_SPARK_MEMORY,
+        help=f"spark.driver.memory / spark.executor.memory / spark.driver.maxResultSize (default: {DEFAULT_SPARK_MEMORY})",
+    )
     args = parser.parse_args()
-    prepare_data_flow(args.instrument, args.granularity, args.params)
+    prepare_data_flow(args.instrument, args.granularity, args.params, spark_memory=args.spark_memory)
 
 
 if __name__ == "__main__":

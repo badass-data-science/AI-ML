@@ -16,6 +16,7 @@ from pyspark.sql import SparkSession
 from forex_ml.config import SplitParams, load_params
 from forex_ml.data.splitting import TimeSeriesSplitter, load_and_stack
 from forex_ml.paths import non_time_series_parquet_path, pair_key, splits_npz_path, time_series_parquet_path
+from forex_ml.spark_session import DEFAULT_SPARK_MEMORY, build_spark_session
 
 
 @task(name="load-split-and-save", cache_policy=NO_CACHE)
@@ -61,20 +62,12 @@ def load_split_and_save_task(
 
 
 @flow(name="forex-ml-split-data", log_prints=True)
-def split_flow(instrument: str, granularity: str, params_path: str | None = None) -> str:
+def split_flow(
+    instrument: str, granularity: str, params_path: str | None = None, spark_memory: str = DEFAULT_SPARK_MEMORY,
+) -> str:
     """Does NOT stop the SparkSession — see prepare_data_flow's docstring for why."""
     params = load_params(params_path) if params_path else load_params()
-    # See prepare_data_flow's driver-memory note -- same reason, same fix. This flow's
-    # notebook predecessor, prepare-ml-ts-data.ipynb, set driver/executor memory and
-    # maxResultSize to 100G explicitly (the stacking step here builds one (n_back,
-    # num_features) array per row, across the whole pair's history).
-    spark = (
-        SparkSession.builder.appName("forex-ml-split-data")
-        .config("spark.driver.memory", "100g")
-        .config("spark.executor.memory", "100g")
-        .config("spark.driver.maxResultSize", "100g")
-        .getOrCreate()
-    )
+    spark = build_spark_session("forex-ml-split-data", memory=spark_memory)
     return load_split_and_save_task(
         spark, instrument, granularity,
         params.feature.n_back, params.feature.lookahead,
@@ -87,8 +80,12 @@ def main() -> None:
     parser.add_argument("--instrument", required=True, help="e.g. EUR/USD")
     parser.add_argument("--granularity", required=True, help="e.g. H1")
     parser.add_argument("--params", default=None, help="Path to params.yaml (default: repo root)")
+    parser.add_argument(
+        "--spark-memory", default=DEFAULT_SPARK_MEMORY,
+        help=f"spark.driver.memory / spark.executor.memory / spark.driver.maxResultSize (default: {DEFAULT_SPARK_MEMORY})",
+    )
     args = parser.parse_args()
-    split_flow(args.instrument, args.granularity, args.params)
+    split_flow(args.instrument, args.granularity, args.params, spark_memory=args.spark_memory)
 
 
 if __name__ == "__main__":

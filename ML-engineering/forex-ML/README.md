@@ -194,6 +194,13 @@ Every output path is keyed on `(instrument, granularity, n_back, lookahead)` (se
 `output/data.pickled` regardless of pair, which meant only one pair could be staged
 for training at a time.
 
+Every command here (and every diagnostic in the next section) that touches Spark
+exposes `--spark-memory` (default `70g`, applied identically to
+`spark.driver.memory`/`spark.executor.memory`/`spark.driver.maxResultSize` — see
+`forex_ml/spark_session.py`), rather than hardcoding a value — the right amount
+depends on the machine actually running it, and `70g` only ever made sense on the
+one workstation the original notebooks were written for.
+
 ## Running everything via DVC
 
 ```bash

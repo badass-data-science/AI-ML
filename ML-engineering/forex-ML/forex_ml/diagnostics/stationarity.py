@@ -43,6 +43,7 @@ from statsmodels.tsa.stattools import InterpolationWarning, adfuller, kpss
 
 from forex_ml.config import load_params
 from forex_ml.paths import non_time_series_parquet_path, pair_key
+from forex_ml.spark_session import DEFAULT_SPARK_MEMORY, build_spark_session
 
 
 def _ar1_effect_size(resstore) -> tuple[float, float]:
@@ -137,17 +138,14 @@ def main() -> None:
     parser.add_argument("--granularity", required=True, help="e.g. H1")
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--params", default=None, help="Path to params.yaml (default: repo root)")
+    parser.add_argument(
+        "--spark-memory", default=DEFAULT_SPARK_MEMORY,
+        help=f"spark.driver.memory / spark.executor.memory / spark.driver.maxResultSize (default: {DEFAULT_SPARK_MEMORY})",
+    )
     args = parser.parse_args()
 
     params = load_params(args.params) if args.params else load_params()
-    # See forex_ml.flows.prepare_data_flow's driver-memory note -- same reason, same fix.
-    spark = (
-        SparkSession.builder.appName("forex-ml-stationarity-diagnostic")
-        .config("spark.driver.memory", "70g")
-        .config("spark.executor.memory", "70g")
-        .config("spark.driver.maxResultSize", "70g")
-        .getOrCreate()
-    )
+    spark = build_spark_session("forex-ml-stationarity-diagnostic", memory=args.spark_memory)
 
     results = check_pair_stationarity(
         spark, params.feature.output_dir, args.instrument, args.granularity,

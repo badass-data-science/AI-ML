@@ -61,6 +61,7 @@ from forex_ml.config import load_params
 from forex_ml.diagnostics.stationarity import check_stationarity
 from forex_ml.evaluation.multiple_comparisons import benjamini_hochberg_report
 from forex_ml.paths import non_time_series_parquet_path, pair_key
+from forex_ml.spark_session import DEFAULT_SPARK_MEMORY, build_spark_session
 
 
 def load_target_and_candidates(
@@ -374,19 +375,16 @@ def main() -> None:
     parser.add_argument("--lasso-max-lag", type=int, default=10)
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--params", default=None, help="Path to params.yaml (default: repo root)")
+    parser.add_argument(
+        "--spark-memory", default=DEFAULT_SPARK_MEMORY,
+        help=f"spark.driver.memory / spark.executor.memory / spark.driver.maxResultSize (default: {DEFAULT_SPARK_MEMORY})",
+    )
     args = parser.parse_args()
 
     params = load_params(args.params) if args.params else load_params()
     candidate_columns = args.candidates.split(",") if args.candidates else list(params.split.columns_x)
 
-    # See forex_ml.flows.prepare_data_flow's driver-memory note -- same reason, same fix.
-    spark = (
-        SparkSession.builder.appName("forex-ml-feature-impact-diagnostic")
-        .config("spark.driver.memory", "70g")
-        .config("spark.executor.memory", "70g")
-        .config("spark.driver.maxResultSize", "70g")
-        .getOrCreate()
-    )
+    spark = build_spark_session("forex-ml-feature-impact-diagnostic", memory=args.spark_memory)
 
     result = analyze_feature_impact(
         spark, params.feature.output_dir, args.instrument, args.granularity,

@@ -43,6 +43,7 @@ from pyspark.sql import SparkSession
 from forex_ml.config import load_params
 from forex_ml.data.splitting import TimeSeriesSplitter, load_and_stack
 from forex_ml.paths import non_time_series_parquet_path, pair_key, time_series_parquet_path
+from forex_ml.spark_session import DEFAULT_SPARK_MEMORY, build_spark_session
 from forex_ml.training.train import train_and_evaluate
 
 
@@ -191,16 +192,13 @@ def main() -> None:
         help="Default: max(feature.n_back, feature.lookahead) from params.yaml",
     )
     parser.add_argument("--params", default=None, help="Path to params.yaml (default: repo root)")
+    parser.add_argument(
+        "--spark-memory", default=DEFAULT_SPARK_MEMORY,
+        help=f"spark.driver.memory / spark.executor.memory / spark.driver.maxResultSize (default: {DEFAULT_SPARK_MEMORY})",
+    )
     args = parser.parse_args()
 
-    # See forex_ml.flows.prepare_data_flow's driver-memory note -- same reason, same fix.
-    spark = (
-        SparkSession.builder.appName("forex-ml-rolling-cv")
-        .config("spark.driver.memory", "70g")
-        .config("spark.executor.memory", "70g")
-        .config("spark.driver.maxResultSize", "70g")
-        .getOrCreate()
-    )
+    spark = build_spark_session("forex-ml-rolling-cv", memory=args.spark_memory)
     report = run_rolling_cv(
         spark, args.instrument, args.granularity, args.n_folds,
         args.min_train_bars, args.val_bars, args.test_bars,
