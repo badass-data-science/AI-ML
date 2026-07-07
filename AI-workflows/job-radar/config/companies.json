@@ -106,6 +106,81 @@
       "name": "Sunrise Systems",
       "ats": "ashby",
       "slug": "sunrise"
+    },
+    {
+      "name": "Rundoo",
+      "ats": "ashby",
+      "slug": "rundoo"
+    },
+    {
+      "name": "Onyx",
+      "ats": "ashby",
+      "slug": "onyx"
+    },
+    {
+      "name": "Integrated Resources",
+      "ats": "greenhouse",
+      "slug": "integrated"
+    },
+    {
+      "name": "Figma",
+      "ats": "greenhouse",
+      "slug": "figma"
+    },
+    {
+      "name": "Airbnb",
+      "ats": "greenhouse",
+      "slug": "airbnb"
+    },
+    {
+      "name": "Atria",
+      "ats": "ashby",
+      "slug": "atria"
+    },
+    {
+      "name": "Pinterest",
+      "ats": "greenhouse",
+      "slug": "pinterest"
+    },
+    {
+      "name": "Snorkel AI",
+      "ats": "greenhouse",
+      "slug": "snorkelai"
+    },
+    {
+      "name": "Ladders",
+      "ats": "lever",
+      "slug": "ladders"
+    },
+    {
+      "name": "Included Health",
+      "ats": "lever",
+      "slug": "includedhealth"
+    },
+    {
+      "name": "Goal Solutions",
+      "ats": "greenhouse",
+      "slug": "goal"
+    },
+    {
+      "name": "Calendly",
+      "ats": "greenhouse",
+      "slug": "calendly"
+    },
+    {
+      "name": "Element Biosciences",
+      "ats": "greenhouse",
+      "slug": "elementbiosciences"
+    },
+    {
+      "name": "Komodo Health",
+      "ats": "greenhouse",
+      "slug": "komodohealth"
+    },
+    {
+      "name": "Oura",
+      "ats": "greenhouse",
+      "slug": "oura"
     }
   ]
 }
