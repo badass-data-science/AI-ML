@@ -1,9 +1,6 @@
-# Our Heroine vs. The Pile of Notebooks
+# Data Scientist vs. The Villainous Jupyter Notebooks of Pipeline Spagetti
 
-Our heroine — a mild-mannered data scientist by day, an occasional DJ of the ill-est
-repute by night, and, this week, a woman staring into the abyss of a currency-trading
-LSTM built entirely out of three Jupyter notebooks and a prayer — had a decision to
-make.
+Our heroine — inauspicious data scientist by day, remix crusader by night, and, this week, a woman staring into the abyss of a currency-trading LSTM built entirely out of three Jupyter notebooks and a prayer — had a decision to make.
 
 The notebooks worked, in the sense that "worked" means "ran, in the correct order, on
 the one machine that still remembered which environment variables it needed." There
