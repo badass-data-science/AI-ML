@@ -290,6 +290,15 @@ enough to compare two classifiers, but a real backtest (the sibling
 was, at what price and spread cost, and what actually happened (the realized % move,
 not just which tercile it landed in) to compute actual P&L, not just accuracy.
 
+Every run also now logs `column_y` as a param (which target this run was trained on),
+for the same reason `n_back`/`lookahead` are logged: two runs on the same pair that
+only differ in prediction target must count as different configurations for
+`multiple_comparisons`'s grouping, not silently collapse together. It also lets a
+downstream consumer check what `y_raw`/`test_y_raw` actually is before treating it as
+a directional quantity — `pd_lead` is a % price change (directional), but
+`volatility_lead` is a magnitude with no direction, so a P&L backtest can't use the
+two interchangeably.
+
 The same four raw fields are available directly on `Splits.test` (see
 `forex_ml/data/splitting.py`) — `price`/`spread` via `COLUMNS_PASSTHROUGH` in
 `forex_ml/data/features.py` (`mid_close`/`spread_close` are the only two of the six

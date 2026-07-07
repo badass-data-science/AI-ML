@@ -71,6 +71,7 @@ def train_and_evaluate(
     output_dir: Path,
     n_back: int,
     lookahead: int,
+    column_y: str,
     *,
     experiment_name: str | None = None,
     register_model: bool = True,
@@ -81,14 +82,20 @@ def train_and_evaluate(
     the held-out `splits.test`, and log params/metrics/model to MLflow. Returns the
     dict of test metrics.
 
-    `n_back`/`lookahead` are FeatureParams, not TrainParams, but are logged here
-    anyway (not just used to locate the splits file) so that
-    forex_ml.evaluation.multiple_comparisons's config-signature hash can tell two
-    runs with different windowing apart. Without this, two runs that only differ in
-    n_back would log an IDENTICAL set of params (TrainParams is unchanged) and get
-    silently collapsed into "the same configuration, just retrained" -- keeping only
-    the most recent one and discarding the other, exactly the failure mode that
-    whole-config hashing was built to prevent.
+    `n_back`/`lookahead`/`column_y` are FeatureParams/SplitParams, not TrainParams,
+    but are logged here anyway (not just used to locate the splits file / interpret
+    y_raw) so that forex_ml.evaluation.multiple_comparisons's config-signature hash
+    can tell two runs with different windowing OR different prediction targets apart.
+    Without this, two runs that only differ in n_back (or in column_y -- e.g. one
+    trained on pd_lead, one on volatility_lead) would log an otherwise-IDENTICAL set
+    of params and get silently collapsed into "the same configuration, just
+    retrained" -- keeping only the most recent one and discarding the other, exactly
+    the failure mode that whole-config hashing was built to prevent. Logging
+    `column_y` also lets a downstream consumer (forex-strategy's backtest) check
+    which raw target `Splits.test["y_raw"]`/the predictions.npz artifact's
+    `test_y_raw` actually is before treating it as a directional quantity -- e.g. a
+    volatility_lead run's y_raw is a magnitude, not the % price change a P&L
+    backtest needs.
 
     `experiment_name`/`register_model`/`extra_params`/`run_name_suffix` exist for
     forex_ml.evaluation.rolling_cv, which trains many folds of the SAME
@@ -123,6 +130,7 @@ def train_and_evaluate(
             "run_uid": run_uid,
             "n_back": n_back,
             "lookahead": lookahead,
+            "column_y": column_y,
             **params.model_dump(exclude={"mlflow_experiment_name", "mlflow_tracking_uri"}),
             **(extra_params or {}),
         }
@@ -227,7 +235,7 @@ def run(instrument: str, granularity: str, params_path: str | Path | None = None
     splits = Splits.load_npz(splits_npz_path(params.feature.output_dir, key))
     return train_and_evaluate(
         splits, params.train, instrument, granularity, Path(params.feature.output_dir),
-        params.feature.n_back, params.feature.lookahead,
+        params.feature.n_back, params.feature.lookahead, params.split.column_y,
     )
 
 

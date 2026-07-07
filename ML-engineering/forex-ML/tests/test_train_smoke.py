@@ -62,7 +62,7 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
         mlflow_tracking_uri=f"sqlite:///{tmp_path / 'mlflow.db'}",
     )
 
-    test_results = train_and_evaluate(splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2)
+    test_results = train_and_evaluate(splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="pd_lead")
     assert "loss" in test_results
     assert "baseline_majority_accuracy" in test_results
     assert "baseline_persistence_accuracy" in test_results
@@ -86,6 +86,7 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
     assert run.data.params["granularity"] == "H1"
     assert run.data.params["n_back"] == "10"
     assert run.data.params["lookahead"] == "2"
+    assert run.data.params["column_y"] == "pd_lead"
 
     registered = client.search_registered_models(filter_string="name = 'test-experiment'")
     assert len(registered) == 1
@@ -105,4 +106,5 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
     assert predictions["lstm_pred_proba"].shape == (10, 3)
     np.testing.assert_array_equal(predictions["test_timestamp"], splits.test["timestamp"])
     np.testing.assert_array_equal(predictions["test_price"], splits.test["price"])
+    np.testing.assert_array_equal(predictions["test_y_raw"], splits.test["y_raw"])
     np.testing.assert_array_equal(predictions["test_spread"], splits.test["spread"])

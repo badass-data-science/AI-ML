@@ -109,8 +109,8 @@ def test_report_across_pairs_finds_both_pairs_end_to_end(tmp_path):
         mlflow_tracking_uri=tracking_uri,
     )
 
-    train_and_evaluate(_make_splits(0), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2)
-    train_and_evaluate(_make_splits(1), params, "AUD/USD", "H1", tmp_path, n_back=10, lookahead=2)
+    train_and_evaluate(_make_splits(0), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="pd_lead")
+    train_and_evaluate(_make_splits(1), params, "AUD/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="pd_lead")
 
     report = report_across_pairs(tracking_uri, "cross-pair-test", baseline="majority")
 
@@ -257,8 +257,8 @@ def test_report_across_pairs_treats_different_n_back_as_separate_hypotheses(tmp_
         mlflow_tracking_uri=tracking_uri,
     )
 
-    train_and_evaluate(_make_splits(0, n_back=10), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2)
-    train_and_evaluate(_make_splits(1, n_back=24), params, "EUR/USD", "H1", tmp_path, n_back=24, lookahead=2)
+    train_and_evaluate(_make_splits(0, n_back=10), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="pd_lead")
+    train_and_evaluate(_make_splits(1, n_back=24), params, "EUR/USD", "H1", tmp_path, n_back=24, lookahead=2, column_y="pd_lead")
 
     report = report_across_pairs(tracking_uri, "n-back-test", baseline="majority")
 
