@@ -74,6 +74,7 @@ train:
   reduce_lr_on_plateau_factor: 0.9
   reduce_lr_on_plateau_patience: 3
   early_stopping_patience: 8
+  gradient_clip_norm: 1.0
   tensorflow_seed: 54
   mlflow_experiment_name: forex-lstm
   mlflow_tracking_uri: "sqlite:///mlflow.db"

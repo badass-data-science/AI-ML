@@ -87,8 +87,15 @@ def build_lstm_regressor(params: TrainParams, input_shape: tuple[int, int], num_
 
 
 def compile_model(model: Sequential, params: TrainParams) -> None:
+    # clipnorm bounds the gradient norm per step -- without it, deep backprop-through-
+    # time (5 stacked LSTM layers x a 200-bar n_back is a lot of unrolled depth) can
+    # explode the loss to NaN partway through the very first epoch. This was always
+    # missing (confirmed absent in the original lstm.py too, via
+    # compile_generic_regressor), it just never got exercised until training was
+    # actually run at n_back=200 against real full-history data -- shorter windows in
+    # tests/earlier real runs weren't deep enough to trigger it.
     model.compile(
-        optimizer=Adam(learning_rate=params.learning_rate),
+        optimizer=Adam(learning_rate=params.learning_rate, clipnorm=params.gradient_clip_norm),
         loss=params.loss_function,
         metrics=list(params.metrics),
     )

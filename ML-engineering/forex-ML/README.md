@@ -110,6 +110,25 @@ future inputs at inference time, but the two adjacent rows are highly autocorrel
 which can optimistically bias the validation/test metric right at the seam (see
 Lopez de Prado's *purged k-fold CV* for the general technique).
 
+### Gradient clipping
+
+`train.gradient_clip_norm` (default `1.0`, applied as `clipnorm` on the Adam
+optimizer in `forex_ml/training/model.py`) bounds the gradient norm on every training
+step. This was added after the first real training run at `n_back=200` against full
+production history — loss diverged to NaN partway through the very first epoch, on
+clean, NaN/Inf-free input data. The cause was unclipped gradients exploding through
+deep backprop-through-time: `number_of_cells_per_rnn_layer: [300, 300, 300, 300, 300]`
+means 5 stacked LSTM layers, and `n_back=200` means each layer unrolls 200 timesteps —
+a lot of multiplicative depth for gradients to blow up across if nothing bounds them.
+
+This gap was **always there**, not something the modernization introduced — the
+original `lstm.py`'s `compile_generic_regressor` had no gradient clipping either (see
+`git show 4186e46:ML-engineering/forex-ML/lstm.py`). It simply never got exercised: the
+original notebooks, and every test/config this pipeline had run before, used smaller
+`n_back` values or smaller-scale data, shallow enough that exploding gradients never
+actually happened to trigger. It took training on real, full-history data at the
+pipeline's actual configured `n_back=200` to hit it for the first time.
+
 ## Running a single pair
 
 ```bash
