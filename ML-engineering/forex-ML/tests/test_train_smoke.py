@@ -55,7 +55,7 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
         mlflow_tracking_uri=f"sqlite:///{tmp_path / 'mlflow.db'}",
     )
 
-    test_results = train_and_evaluate(splits, params, "EUR/USD", "H1", tmp_path)
+    test_results = train_and_evaluate(splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2)
     assert "loss" in test_results
     assert "baseline_majority_accuracy" in test_results
     assert "baseline_persistence_accuracy" in test_results
@@ -77,6 +77,8 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
             assert f"{split_name}_class_{class_idx}_balance" in run.data.metrics
     assert run.data.params["instrument"] == "EUR/USD"
     assert run.data.params["granularity"] == "H1"
+    assert run.data.params["n_back"] == "10"
+    assert run.data.params["lookahead"] == "2"
 
     registered = client.search_registered_models(filter_string="name = 'test-experiment'")
     assert len(registered) == 1

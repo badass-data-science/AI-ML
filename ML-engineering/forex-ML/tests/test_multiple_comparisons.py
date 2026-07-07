@@ -102,8 +102,8 @@ def test_report_across_pairs_finds_both_pairs_end_to_end(tmp_path):
         mlflow_tracking_uri=tracking_uri,
     )
 
-    train_and_evaluate(_make_splits(0), params, "EUR/USD", "H1", tmp_path)
-    train_and_evaluate(_make_splits(1), params, "AUD/USD", "H1", tmp_path)
+    train_and_evaluate(_make_splits(0), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2)
+    train_and_evaluate(_make_splits(1), params, "AUD/USD", "H1", tmp_path, n_back=10, lookahead=2)
 
     report = report_across_pairs(tracking_uri, "cross-pair-test", baseline="majority")
 
@@ -215,3 +215,44 @@ def test_report_across_pairs_treats_different_configurations_as_separate_hypothe
 
     assert len(report) == 2  # both configurations kept, not collapsed to the latest
     assert all((r["instrument"], r["granularity"]) == ("EUR/USD", "H1") for r in report.values())
+
+
+def test_report_across_pairs_treats_different_n_back_as_separate_hypotheses(tmp_path):
+    """Regression test: n_back/lookahead are FeatureParams, not TrainParams, so they
+    used to never get logged to MLflow at all -- two runs differing ONLY in n_back
+    logged an IDENTICAL set of params and collapsed into "the same configuration,
+    just retrained," silently discarding one of them. train_and_evaluate now logs
+    n_back/lookahead explicitly so this can't happen, even though the TrainParams
+    below are byte-for-byte identical between the two calls."""
+    tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    params = TrainParams(
+        number_of_cells_per_rnn_layer=[4],
+        number_of_cells_per_dense_layer=[4],
+        lstm_activation_function="relu",
+        dense_activation_function="relu",
+        final_dense_activation_function="softmax",
+        epochs=1,
+        batch_size=8,
+        learning_rate=0.001,
+        loss_function="categorical_crossentropy",
+        metrics=["accuracy"],
+        l1_regularization_constant=0.0001,
+        l2_regularization_constant=0.0001,
+        batch_normalization_momentum=0.9,
+        dense_dropout_rate=0.1,
+        rnn_dropout_rate=0.0,
+        rnn_recurrent_dropout_rate=0.0,
+        reduce_lr_on_plateau_factor=0.9,
+        reduce_lr_on_plateau_patience=1,
+        early_stopping_patience=1,
+        tensorflow_seed=1,
+        mlflow_experiment_name="n-back-test",
+        mlflow_tracking_uri=tracking_uri,
+    )
+
+    train_and_evaluate(_make_splits(0, n_back=10), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2)
+    train_and_evaluate(_make_splits(1, n_back=24), params, "EUR/USD", "H1", tmp_path, n_back=24, lookahead=2)
+
+    report = report_across_pairs(tracking_uri, "n-back-test", baseline="majority")
+
+    assert len(report) == 2  # both n_back values kept, not collapsed to the latest

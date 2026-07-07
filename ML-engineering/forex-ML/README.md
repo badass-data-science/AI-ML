@@ -64,6 +64,33 @@ no way for a later test to substitute different credentials. See
 `tests/test_secrets_isolation.py` for the regression test and the real bug this
 guards against.
 
+### GPU training
+
+`pyproject.toml` depends on `tensorflow[and-cuda]`, which installs cuDNN/cuBLAS/etc.
+as pip packages (`nvidia-*`) rather than requiring a system-wide CUDA toolkit. That's
+enough for `tf.test.is_built_with_cuda()` to report `True`, but **not** enough for
+TensorFlow to actually find and load those libraries at runtime — `uv`/pip install
+them into the venv but don't add them to the dynamic linker's search path. Without
+this, training silently runs on CPU with no error, just no GPU listed in
+`tf.config.list_physical_devices("GPU")`.
+
+Run this once per shell session before any training/GPU-dependent command (`train_flow`,
+`rolling_cv`, or anything that imports `forex_ml.training.model`):
+
+```bash
+export LD_LIBRARY_PATH="$(find .venv/lib/python3.11/site-packages/nvidia -maxdepth 2 -type d -name lib | tr '\n' ':')${LD_LIBRARY_PATH}"
+```
+
+Verify it worked:
+
+```bash
+uv run python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
+```
+
+Should print `[PhysicalDevice(name='/physical_device:GPU:0', device_type='GPU')]`, not
+`[]`. This is a standard consequence of pip-installed (rather than system) CUDA on
+Linux, not specific to this project's setup.
+
 ## Configuration
 
 Everything the pipeline needs — instrument/granularity lists, feature-engineering

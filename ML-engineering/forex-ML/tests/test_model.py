@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from forex_ml.config import TrainParams
-from forex_ml.training.model import build_lstm_regressor, compile_model
+from forex_ml.training.model import build_lstm_regressor, compile_model, configure_gpu_memory_growth
 
 
 def _minimal_train_params(**overrides) -> TrainParams:
@@ -62,3 +62,14 @@ def test_single_rnn_layer_config_also_builds():
     model = build_lstm_regressor(params, input_shape=(5, 2), num_outputs=3)
     compile_model(model, params)
     assert model.output_shape == (None, 3)
+
+
+def test_configure_gpu_memory_growth_is_safe_to_call_repeatedly():
+    """Regression test: on a GPU-equipped machine, memory growth can only be set
+    before the GPU context initializes, so every call after the first one in a
+    process (once per train_and_evaluate() call -- once per rolling_cv fold, once
+    per test in a shared pytest process) used to raise
+    RuntimeError("Physical devices cannot be modified after being initialized").
+    A no-op on CPU-only machines either way, since the device loop never executes."""
+    configure_gpu_memory_growth()
+    configure_gpu_memory_growth()

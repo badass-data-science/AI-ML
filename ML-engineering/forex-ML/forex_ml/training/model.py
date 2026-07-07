@@ -16,9 +16,20 @@ from forex_ml.config import TrainParams
 def configure_gpu_memory_growth() -> None:
     """Replaces the original `from numba import cuda; device.reset()` hack with the
     standard TensorFlow idiom for not pre-allocating all GPU memory. A no-op on
-    CPU-only machines instead of raising, unlike the numba.cuda call it replaces."""
+    CPU-only machines instead of raising, unlike the numba.cuda call it replaces.
+
+    Memory growth can only be set before the GPU context initializes -- this function
+    is called at the top of every train_and_evaluate() call (once per fold in
+    rolling_cv, once per test in a shared pytest process, etc.), so every call after
+    the first one in a process hits an already-initialized context and TF raises
+    RuntimeError. That's expected, not a failure: the first call already took effect,
+    there's nothing left to configure, so it's caught and ignored here.
+    """
     for gpu in tf.config.list_physical_devices("GPU"):
-        tf.config.experimental.set_memory_growth(gpu, True)
+        try:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        except RuntimeError:
+            pass
 
 
 def build_lstm_regressor(params: TrainParams, input_shape: tuple[int, int], num_outputs: int) -> Sequential:

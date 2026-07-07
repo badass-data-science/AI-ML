@@ -110,6 +110,7 @@ def run_rolling_cv(
     for i, fold_splits in enumerate(folds):
         result = train_and_evaluate(
             fold_splits, params.train, instrument, granularity, Path(params.feature.output_dir),
+            params.feature.n_back, params.feature.lookahead,
             experiment_name=experiment_name,
             register_model=False,
             extra_params={"fold_index": i, "window_type": window, "diagnostic": "rolling_cv"},
