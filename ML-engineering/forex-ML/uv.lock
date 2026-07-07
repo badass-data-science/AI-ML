@@ -1483,6 +1483,7 @@ dependencies = [
     { name = "pyspark" },
     { name = "python-tools-and-shortcuts" },
     { name = "pyyaml" },
+    { name = "scikit-learn" },
     { name = "statsmodels" },
     { name = "tensorflow", extra = ["and-cuda"] },
 ]
@@ -1513,6 +1514,7 @@ requires-dist = [
     { name = "python-tools-and-shortcuts", editable = "../../../python-tools-and-shortcuts" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
+    { name = "scikit-learn", specifier = ">=1.4" },
     { name = "statsmodels", specifier = ">=0.14" },
     { name = "tensorflow", extras = ["and-cuda"], specifier = ">=2.16" },
 ]

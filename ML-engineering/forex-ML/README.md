@@ -297,6 +297,60 @@ what each test actually estimates rather than one generic number:
   identically.
 
 ```bash
+uv run python -m forex_ml.diagnostics.feature_impact --instrument EUR/USD --granularity H1
+```
+
+Quick, linear-approximation screening for "which time series most impacts the
+target" (`forex_ml/diagnostics/feature_impact.py`) — a repeatable tool for
+evaluating a candidate column **before** spending a training run on it, or for
+deciding what to drop from `split.columns_x` if GPU memory becomes the binding
+constraint. `--candidates` accepts ANY comma-separated list of Stage-1 columns, not
+just the ones currently in `columns_x` — the whole point is to be able to check a
+column that isn't in production config yet. Four techniques, cheapest and least
+rigorous first:
+
+- **Cross-correlation (CCF)** — correlation between each candidate `lag` bars in the
+  past and the target now, across a range of lags. Direct extension of the ACF/PACF
+  machinery above to a candidate-vs-target pair. Cheapest, fewest assumptions.
+- **Pairwise Granger causality** — does a candidate's own history improve a linear
+  forecast of the target beyond the target's own history, at one shared lag across
+  every candidate (not a scanned range per candidate — that would be its own
+  uncorrected multiple-comparisons problem stacked on the one already being
+  corrected for across candidates). BH-FDR corrected across candidates, same reuse
+  of `forex_ml.evaluation.multiple_comparisons` as the pair-comparison report.
+  Flags each candidate's stationarity verdict too, since Granger validity assumes it.
+- **VAR + block-exogeneity Wald tests + forecast-error variance decomposition
+  (FEVD)** — the properly multivariate version of Granger causality, controlling for
+  every other candidate jointly instead of testing pairs in isolation. Pairwise
+  Granger can't see multicollinearity; VAR can. FEVD reports what fraction of the
+  target's forecast-error variance each candidate accounts for at a given
+  horizon — the closest linear analogue of a feature-importance ranking for a
+  time-series system.
+- **Lasso-regularized lagged regression** — a single-equation distributed-lag model
+  (target ~ every candidate at lags 0..max_lag) with L1 regularization, which shrinks
+  unhelpful lags toward (not always exactly to) zero — a direct, automatic
+  "drop this" signal. Uses `TimeSeriesSplit`, not the sklearn default k-fold, to pick
+  the regularization strength — ordinary k-fold would leak future folds into past
+  ones, the same chronological discipline as everywhere else in this pipeline.
+
+All four are explicitly linear approximations — an LSTM can exploit nonlinear and
+cross-feature structure none of them can see. This is a floor on which candidates are
+worth a full training run, not a ceiling on what could possibly matter, the same
+relationship the ACF/PACF diagnostic has to `n_back`.
+
+**A real gotcha this tool checks for, not just a theoretical risk**: a fixed-period
+sin/cos encoding (`day_sin`/`day_cos`, `week_sin`/`week_cos`) is *exactly* linearly
+dependent across lags — `sin(ω(t-k))` is an exact linear combination of `sin(ωt)` and
+`cos(ωt)` for any fixed lag `k` (the angle-subtraction identity), so including many
+lags of such a pair in a VAR adds zero information and can wreck its numerical
+conditioning. Confirmed directly on real data: an 11-lag block of `day_sin`/`day_cos`
+alone has rank 2 of 22 columns, condition number ~1.6×10¹². When this happens, the
+VAR causality report's `rank_warning` field (and the printed `WARNING:` line) says so
+explicitly — a candidate showing a large FEVD share but "not significant" in the
+causality test is a sign to check this warning, not a sign the candidate doesn't
+matter.
+
+```bash
 uv run python -m forex_ml.evaluation.multiple_comparisons --experiment forex-lstm
 ```
 
