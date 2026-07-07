@@ -133,7 +133,12 @@ def main() -> None:
     )
     parser.add_argument("--instrument", required=True, help="e.g. EUR/USD")
     parser.add_argument("--granularity", required=True, help="e.g. H1")
-    parser.add_argument("--column", default="pd_lead", help="Target column to diagnose (default: pd_lead)")
+    parser.add_argument(
+        "--column", default=None,
+        help="Column to diagnose (default: params.yaml's split.column_y -- the actual configured "
+             "target -- rather than a hardcoded name, so switching targets in params.yaml doesn't "
+             "silently leave this diagnosing the wrong column)",
+    )
     parser.add_argument("--nlags", type=int, default=250, help="Max lags to check (default: 250)")
     parser.add_argument(
         "--practical-threshold", type=float, default=0.1,
@@ -152,13 +157,14 @@ def main() -> None:
         .getOrCreate()
     )
 
+    column = args.column if args.column is not None else params.split.column_y
     result = diagnose_pair(
         spark, params.feature.output_dir, args.instrument, args.granularity,
-        params.feature.n_back, params.feature.lookahead, column=args.column, nlags=args.nlags,
+        params.feature.n_back, params.feature.lookahead, column=column, nlags=args.nlags,
         practical_threshold=args.practical_threshold,
     )
 
-    print(f"{args.instrument} {args.granularity} — {args.column}")
+    print(f"{args.instrument} {args.granularity} — {column}")
     print(f"  observations:            {result['n_observations']}")
     print(f"  configured n_back:       {params.feature.n_back}")
     print(f"  configured lookahead:    {params.feature.lookahead}")

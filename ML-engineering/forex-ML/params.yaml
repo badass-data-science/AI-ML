@@ -26,7 +26,7 @@ feature:
   output_dir: output
 
 split:
-  column_y: pd_lead
+  column_y: volatility_lead
   class_cutoff_percentiles: [33.333333, 66.666667]
   columns_x: [volatility, return, diff_spread_close, diff_volume, day_sin, day_cos]
   train_val_proportion: [0.7, 0.15]

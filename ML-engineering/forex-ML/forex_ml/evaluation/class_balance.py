@@ -1,7 +1,8 @@
 """Class balance reporting — a cheap check for silent regime drift.
 
-The tertile class thresholds are computed once from TRAINING-period pd_lead
-quantiles (correctly — see TimeSeriesSplitter), so by construction train's class
+The tertile class thresholds are computed once from TRAINING-period quantiles of
+whichever column `split.column_y` in params.yaml names (`pd_lead`, `volatility_lead`,
+etc. — see TimeSeriesSplitter), so by construction train's class
 balance is close to even. Val/test are NOT guaranteed to be: if volatility regime
 shifts between periods (routine for FX), a threshold calibrated on a calm training
 period can make a later volatile test period look mostly "extreme class", or vice

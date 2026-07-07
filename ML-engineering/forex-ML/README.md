@@ -110,6 +110,36 @@ future inputs at inference time, but the two adjacent rows are highly autocorrel
 which can optimistically bias the validation/test metric right at the seam (see
 Lopez de Prado's *purged k-fold CV* for the general technique).
 
+### Switching the prediction target
+
+`split.column_y` is the single knob that picks what the model predicts — switching it
+never requires touching source code, since `split_flow.py` reads it from `params.yaml`
+and passes it explicitly through to `TimeSeriesSplitter`. `add_targets()`
+(`forex_ml/data/features.py`) computes all three candidate targets unconditionally,
+regardless of which one is selected, so Stage 1 output already has every option
+available:
+
+- `pd_lead` — percent change in mid-close over the next `lookahead` bars (direction).
+- `spread_close_lead` — future bid-ask spread.
+- `volatility_lead` — realized high-low range over the next `lookahead` bars (magnitude).
+
+The one place this needs care: **diagnostics tools default to whatever
+`split.column_y` currently is**, not a hardcoded name — `forex_ml.diagnostics.autocorrelation`'s
+`--column` flag falls back to `params.split.column_y` specifically so switching targets in
+`params.yaml` doesn't leave a diagnostic silently checking the old one. Pass `--column`
+explicitly only to check a *different* column than the configured target (e.g. `return`,
+to sanity-check a feature rather than the target itself).
+
+`pd_lead` vs. `volatility_lead` is a real, empirically-grounded choice, not an arbitrary
+one — see the blog posts for the full investigation. Short version: `return`'s own
+autocorrelation is indistinguishable from noise at every lag checked, and a real
+`n_back=200` training run on `pd_lead` badly underperformed a trivial persistence
+baseline — consistent with direction being close to the efficient-markets wall.
+`volatility_lead`, by contrast, showed genuine multi-year regime drift and long-memory
+autocorrelation staying above the practical-significance threshold out to roughly
+lag 150–200 (`pd_lead`'s equivalent floor was ~4–6 bars) — empirically justifying a
+deep `n_back` window in a way `pd_lead` never did.
+
 ### Gradient and input clipping
 
 `train.gradient_clip_norm` (default `1.0`, applied as `clipnorm` on the Adam
