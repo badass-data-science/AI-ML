@@ -38,6 +38,18 @@ def test_add_market_features_computes_volatility_and_lag_diffs(spark, synthetic_
     assert not pd.isna(pdf.loc[1, "diff_spread_close"])
 
 
+def test_add_market_features_realized_volatility_is_a_fixed_12_bar_trailing_average(spark, synthetic_candles):
+    """Independent of ma_lookback_list/ma_columns_list -- must exist regardless of
+    whatever moving-average windows are configured for actual model features (every
+    test in this suite uses ma_lookback_list=[3, 5]; production uses [12, 30, 50])."""
+    df = spark.createDataFrame(synthetic_candles)
+    df = add_market_features(df)
+    pdf = df.orderBy("unix_epoch_s").toPandas()
+
+    manual = pdf["volatility"].rolling(window=12, min_periods=1).mean()
+    np.testing.assert_allclose(pdf["realized_volatility"].to_numpy(), manual.to_numpy(), rtol=1e-4)
+
+
 def test_add_targets_pd_lead_matches_manual_calculation(spark, synthetic_candles):
     lookahead = 4
     df = spark.createDataFrame(synthetic_candles)
@@ -81,12 +93,15 @@ def test_engineer_features_produces_full_n_back_windows(spark, synthetic_candles
         assert col not in df_non_time_series.columns
     assert "pd_lead" in df_non_time_series.columns
 
-    # mid_close/spread_close are the exception (see COLUMNS_PASSTHROUGH): kept as
-    # reference data for backtesting, but never fed to the model as a feature.
+    # mid_close/spread_close/realized_volatility are the exception (see
+    # COLUMNS_PASSTHROUGH): kept as reference data for backtesting/position sizing,
+    # but never fed to the model as a feature.
     assert "mid_close" in df_non_time_series.columns
     assert "spread_close" in df_non_time_series.columns
+    assert "realized_volatility" in df_non_time_series.columns
     assert "mid_close" not in columns_x
     assert "spread_close" not in columns_x
+    assert "realized_volatility" not in columns_x
 
 
 def test_window_into_arrays_preserves_chronological_order_oldest_first(spark, synthetic_candles):

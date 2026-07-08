@@ -191,12 +191,13 @@ def train_and_evaluate(
         # test set; persistence_correct is one row shorter (see persistence_baseline).
         #
         # Also saved: the raw softmax probabilities (not just top-1 correctness) and
-        # the test row's timestamp/price/spread/y_raw/exit_bar_offset from
-        # splits.test (see forex_ml.data.splitting.Splits) -- a real backtest
-        # (forex-strategy) needs "how confident was the model, at what price, at
-        # what spread cost, what was the actual realized outcome, and how long did
-        # the trade actually take to resolve" per row, which a correct/incorrect
-        # boolean alone can't answer.
+        # the test row's timestamp/price/spread/y_raw/exit_bar_offset/
+        # realized_volatility from splits.test (see forex_ml.data.splitting.Splits)
+        # -- a real backtest (forex-strategy) needs "how confident was the model, at
+        # what price, at what spread cost, what was the actual realized outcome, how
+        # long did the trade actually take to resolve, and how volatile was the
+        # market recently" per row, which a correct/incorrect boolean alone can't
+        # answer.
         lstm_pred_proba = model.predict(splits.test["M"], verbose=0)
         lstm_pred_idx = np.argmax(lstm_pred_proba, axis=1)
         lstm_true_idx = np.argmax(splits.test["y"], axis=1)
@@ -212,6 +213,7 @@ def train_and_evaluate(
             test_spread=splits.test["spread"],
             test_y_raw=splits.test["y_raw"],
             test_exit_bar_offset=splits.test["exit_bar_offset"],
+            test_realized_volatility=splits.test["realized_volatility"],
         )
         mlflow.log_artifact(str(predictions_path))
 

@@ -105,12 +105,16 @@ class Splits:
         so loading it can't execute arbitrary code, and per-pair files stay small
         instead of one shared, unversioned 684MB pickle.
 
-        `test` carries five extra keys (timestamp/price/spread/y_raw/exit_bar_offset)
-        that train/val don't -- a backtest only ever needs to reconstruct P&L on the
-        held-out test set, so train/val stay exactly {"M", "y"} rather than carrying
-        reference data nothing reads. `exit_bar_offset` (how many bars the
-        triple-barrier label actually took to resolve) lets a backtest compute a
-        real, variable holding period instead of assuming a fixed one.
+        `test` carries six extra keys (timestamp/price/spread/y_raw/exit_bar_offset/
+        realized_volatility) that train/val don't -- a backtest only ever needs to
+        reconstruct P&L on the held-out test set, so train/val stay exactly
+        {"M", "y"} rather than carrying reference data nothing reads.
+        `exit_bar_offset` (how many bars the triple-barrier label actually took to
+        resolve) lets a backtest compute a real, variable holding period instead of
+        assuming a fixed one. `realized_volatility` (a fixed-window backward-looking
+        reference, see COLUMNS_PASSTHROUGH) lets a backtest scale position size down
+        as recent realized volatility rises, without needing a second, forward-
+        looking volatility model.
         """
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(
@@ -120,6 +124,7 @@ class Splits:
             test_M=self.test["M"], test_y=self.test["y"],
             test_timestamp=self.test["timestamp"], test_price=self.test["price"], test_spread=self.test["spread"],
             test_y_raw=self.test["y_raw"], test_exit_bar_offset=self.test["exit_bar_offset"],
+            test_realized_volatility=self.test["realized_volatility"],
         )
 
     @classmethod
@@ -132,6 +137,7 @@ class Splits:
                 "M": data["test_M"], "y": data["test_y"],
                 "timestamp": data["test_timestamp"], "price": data["test_price"], "spread": data["test_spread"],
                 "y_raw": data["test_y_raw"], "exit_bar_offset": data["test_exit_bar_offset"],
+                "realized_volatility": data["test_realized_volatility"],
             },
         )
 
@@ -373,6 +379,11 @@ class TimeSeriesSplitter:
                 # backtest compute a real, variable holding period (and therefore
                 # accurate swap-cost accounting) instead of assuming a fixed one.
                 "exit_bar_offset": df_test["exit_bar_offset"].to_numpy(),
+                # Fixed-window, backward-looking realized volatility (see
+                # COLUMNS_PASSTHROUGH) -- lets a backtest scale position size down as
+                # recent realized volatility rises, without needing a second,
+                # forward-looking volatility model.
+                "realized_volatility": df_test["realized_volatility"].to_numpy(),
             },
         )
 

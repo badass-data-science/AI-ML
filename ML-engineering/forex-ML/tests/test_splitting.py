@@ -11,8 +11,8 @@ COLUMNS_X_COMPONENTS = ["feat_0", "feat_1", "feat_2"]
 
 def _make_pdf(n: int, n_back: int = 5, n_features: int = 3) -> pd.DataFrame:
     """Stands in for what load_and_stack would have produced -- includes mid_close/
-    spread_close (see COLUMNS_PASSTHROUGH) since _build_splits reads them directly off
-    this frame to populate the test split's reference data."""
+    spread_close/realized_volatility (see COLUMNS_PASSTHROUGH) since _build_splits
+    reads them directly off this frame to populate the test split's reference data."""
     rng = np.random.default_rng(0)
     timestamps = np.arange(n) * 3600
     X = rng.normal(size=(n, n_back, n_features))
@@ -23,6 +23,7 @@ def _make_pdf(n: int, n_back: int = 5, n_features: int = 3) -> pd.DataFrame:
         "X": list(X),
         "mid_close": rng.normal(loc=1.1, scale=0.01, size=n),
         "spread_close": rng.uniform(0.0001, 0.0005, size=n),
+        "realized_volatility": rng.uniform(0.0005, 0.005, size=n),
     })
 
 
@@ -95,6 +96,7 @@ def test_npz_round_trip(tmp_path):
     np.testing.assert_array_equal(splits.test["spread"], loaded.test["spread"])
     np.testing.assert_array_equal(splits.test["y_raw"], loaded.test["y_raw"])
     np.testing.assert_array_equal(splits.test["exit_bar_offset"], loaded.test["exit_bar_offset"])
+    np.testing.assert_array_equal(splits.test["realized_volatility"], loaded.test["realized_volatility"])
 
 
 def test_test_split_y_raw_matches_raw_return_pct_not_net_of_cost():
@@ -119,6 +121,15 @@ def test_test_split_exit_bar_offset_matches_the_labeled_frame():
     np.testing.assert_array_equal(splits.test["exit_bar_offset"], expected)
     assert (splits.test["exit_bar_offset"] >= 1).all()
     assert (splits.test["exit_bar_offset"] <= MAX_HOLDING_BARS).all()
+
+
+def test_test_split_realized_volatility_matches_the_labeled_frame():
+    splitter = _splitter(100)
+    splits = splitter.split_train_val_test_by_proportion([0.7, 0.15])
+
+    lookup = splitter.df.set_index("unix_epoch_s")["realized_volatility"]
+    expected = lookup.loc[splits.test["timestamp"]].to_numpy()
+    np.testing.assert_array_equal(splits.test["realized_volatility"], expected)
 
 
 def test_outcome_one_hot_mapping_matches_the_underlying_label():

@@ -19,12 +19,19 @@ COLUMN_TIMESTAMP = "unix_epoch_s"
 COLUMNS_PARTITION = ["instrument", "granularity"]
 COLUMNS_Y = ["pd_lead", "spread_close_lead", "volatility_lead"]
 
-# Raw (unnormalized) price/spread columns kept around as reference data -- never fed
-# to the model as a feature (see select_xy_columns), but needed downstream by
-# forex-strategy's backtest to know the actual price a test-set row traded at and
-# the spread cost of trading it. Everything else in columns_base (mid_open/high/low,
-# volume) is still dropped; the model only ever sees the engineered features.
-COLUMNS_PASSTHROUGH = ["mid_close", "spread_close"]
+# Reference-only columns -- never fed to the model as a feature (see
+# select_xy_columns/window_into_arrays, which only window columns NOT in this list),
+# but needed downstream. mid_close/spread_close: forex-strategy's backtest needs to
+# know the actual price a test-set row traded at and the spread cost of trading it;
+# everything else in columns_base (mid_open/high/low, volume) is still dropped.
+# realized_volatility (see add_market_features): a fixed-window, backward-looking
+# realized-volatility reference for position sizing -- forex-strategy scales trade
+# size down as this rises, rather than needing a second, forward-looking volatility
+# model. Deliberately NOT one of the ma_lookback_list-configurable volatility_MA_N
+# columns: those depend on a config value that varies across environments (e.g.
+# every test here uses ma_lookback_list=[3, 5], production uses [12, 30, 50]) --
+# this needs to exist unconditionally, the same reason mid_close/spread_close do.
+COLUMNS_PASSTHROUGH = ["mid_close", "spread_close", "realized_volatility"]
 
 # Approximate UTC session windows (standard interbank FX convention: half-open
 # [start, end) hours). Fixed UTC hours, not DST-aware — London/New York local session
@@ -99,15 +106,25 @@ def add_session_features(df: DataFrame, cols: FeatureColumns = FeatureColumns())
     )
 
 
+_REALIZED_VOLATILITY_WINDOW_BARS = 12
+
+
 def add_market_features(df: DataFrame, cols: FeatureColumns = FeatureColumns()) -> DataFrame:
     window_spec = Window.partitionBy(*cols.columns_partition).orderBy(*cols.columns_sort)
-    return (
+    df = (
         df
         .withColumn("volatility", F.col("mid_high") - F.col("mid_low"))
         .withColumn("return", F.col("mid_close") - F.col("mid_open"))
         .withColumn("diff_spread_close", F.col("spread_close") - F.lag(F.col("spread_close"), 1).over(window_spec))
         .withColumn("diff_volume", F.col("volume") - F.lag(F.col("volume"), 1).over(window_spec))
     )
+    # A fixed-window, backward-looking realized-volatility reference (see
+    # COLUMNS_PASSTHROUGH) -- deliberately NOT one of the ma_lookback_list-configurable
+    # volatility_MA_N columns below, so it exists unconditionally regardless of
+    # whatever moving-average windows happen to be configured for actual model
+    # features. Used by forex-strategy for position sizing, not as a model input.
+    realized_vol_window = window_spec.rowsBetween(1 - _REALIZED_VOLATILITY_WINDOW_BARS, 0)
+    return df.withColumn("realized_volatility", F.avg(F.col("volatility")).over(realized_vol_window))
 
 
 def add_targets(df: DataFrame, lookahead: int, cols: FeatureColumns = FeatureColumns()) -> DataFrame:

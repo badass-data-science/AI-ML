@@ -305,13 +305,15 @@ the current scheme, without grepping every candidate version's source run.
 
 The `<run_uid>_predictions.npz` artifact (see above) also carries the raw softmax
 probabilities (`lstm_pred_proba`) and the test split's timestamp/price/spread/raw
-target value/exit timing (`test_timestamp`/`test_price`/`test_spread`/`test_y_raw`/
-`test_exit_bar_offset`) alongside the existing correctness booleans used for
-McNemar's test. A correct/incorrect boolean is enough to compare two classifiers,
-but a real backtest (the sibling [`forex-strategy`](../forex-strategy) project)
-needs to know how confident the model was, at what price and spread cost, what
-actually happened (the realized % move, not just which barrier it hit), and how
-long the trade actually took to resolve, to compute actual P&L, not just accuracy.
+target value/exit timing/realized volatility (`test_timestamp`/`test_price`/
+`test_spread`/`test_y_raw`/`test_exit_bar_offset`/`test_realized_volatility`)
+alongside the existing correctness booleans used for McNemar's test. A
+correct/incorrect boolean is enough to compare two classifiers, but a real backtest
+(the sibling [`forex-strategy`](../forex-strategy) project) needs to know how
+confident the model was, at what price and spread cost, what actually happened
+(the realized % move, not just which barrier it hit), how long the trade actually
+took to resolve, and how volatile the market recently was (for position sizing),
+to compute actual P&L, not just accuracy.
 
 Every run also logs `column_y` as a param — always `"triple_barrier"` for real
 training runs now, kept as an explicit logged value (not hardcoded away) so a
@@ -321,17 +323,22 @@ grouping keeps working exactly as it did when `column_y` distinguished `pd_lead`
 from `volatility_lead` runs.
 
 The same fields are available directly on `Splits.test` (see
-`forex_ml/data/splitting.py`) — `price`/`spread` via `COLUMNS_PASSTHROUGH` in
-`forex_ml/data/features.py` (`mid_close`/`spread_close` are the only two of the six
-raw OHLCV columns kept around after feature engineering, explicitly excluded from
-`columns_x` so they're never fed to the model); `y_raw` is `raw_return_pct` (the
-*pre-cost* realized return at the row's actual exit bar — deliberately not
-`net_return_pct`, which is already net of spread/swap and would double-count cost
-if fed to a backtest that charges its own); and `exit_bar_offset` is how many bars
-the label actually took to resolve, letting a backtest compute a real, variable
-holding period instead of assuming a fixed one. Only the **test** split carries any
-of this (`train`/`val` stay exactly `{"M", "y"}`) since backtesting only ever needs
-to reconstruct P&L on the held-out set.
+`forex_ml/data/splitting.py`) — `price`/`spread`/`realized_volatility` via
+`COLUMNS_PASSTHROUGH` in `forex_ml/data/features.py` (`mid_close`/`spread_close`/
+`realized_volatility` are the reference columns kept around after feature
+engineering, explicitly excluded from `columns_x` so they're never fed to the model
+as input); `y_raw` is `raw_return_pct` (the *pre-cost* realized return at the row's
+actual exit bar — deliberately not `net_return_pct`, which is already net of
+spread/swap and would double-count cost if fed to a backtest that charges its own);
+`exit_bar_offset` is how many bars the label actually took to resolve, letting a
+backtest compute a real, variable holding period instead of assuming a fixed one;
+and `realized_volatility` is a fixed 12-bar backward-looking rolling average of
+single-bar `volatility` (`mid_high - mid_low`), computed in `add_market_features` —
+real, already-observed recent volatility for a backtest to size positions against,
+replacing the old approach of training a second model to predict a
+`volatility_lead` ordinal class. Only the **test** split carries any of this
+(`train`/`val` stay exactly `{"M", "y"}`) since backtesting only ever needs to
+reconstruct P&L on the held-out set.
 
 ## Diagnostics
 
