@@ -44,8 +44,19 @@ class FeatureParams(BaseModel):
 
 
 class SplitParams(BaseModel):
-    column_y: str
-    class_cutoff_percentiles: list[float]
+    """The training target is triple-barrier labeling (see
+    forex_ml/data/triple_barrier.py): label each row by whichever of a profit-take,
+    stop-loss, or max-holding-period (vertical) barrier is hit first, net of a
+    round-trip spread charge and swap/rollover for any 5pm-New-York boundary
+    actually crossed. There's no column_y/class_cutoff_percentiles here anymore --
+    the label is computed directly as {-1, 0, +1}, not a continuous value that
+    needs train-quantile thresholds to discretize.
+    """
+
+    profit_take_pct: float
+    stop_loss_pct: float
+    max_holding_bars: int
+    swap_cost_pct_per_night: float = 0.0
     columns_x: list[str]
     train_val_proportion: list[float]
 

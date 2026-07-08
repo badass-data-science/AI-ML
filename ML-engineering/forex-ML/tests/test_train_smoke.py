@@ -31,6 +31,7 @@ def _make_splits(n_back: int = 10, n_features: int = 3, n_classes: int = 3) -> S
     test["price"] = rng.normal(loc=1.1, scale=0.01, size=n_test).astype("float64")
     test["spread"] = rng.uniform(0.0001, 0.0005, size=n_test).astype("float64")
     test["y_raw"] = rng.normal(size=n_test).astype("float64")
+    test["exit_bar_offset"] = rng.integers(1, 4, size=n_test)
 
     return Splits(train=_one(40), val=_one(10), test=test)
 
@@ -62,7 +63,10 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
         mlflow_tracking_uri=f"sqlite:///{tmp_path / 'mlflow.db'}",
     )
 
-    test_results = train_and_evaluate(splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="pd_lead")
+    test_results = train_and_evaluate(
+        splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="triple_barrier",
+        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3, swap_cost_pct_per_night=0.0,
+    )
     assert "loss" in test_results
     assert "baseline_majority_accuracy" in test_results
     assert "baseline_persistence_accuracy" in test_results
@@ -86,7 +90,11 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
     assert run.data.params["granularity"] == "H1"
     assert run.data.params["n_back"] == "10"
     assert run.data.params["lookahead"] == "2"
-    assert run.data.params["column_y"] == "pd_lead"
+    assert run.data.params["column_y"] == "triple_barrier"
+    assert run.data.params["profit_take_pct"] == "0.5"
+    assert run.data.params["stop_loss_pct"] == "0.5"
+    assert run.data.params["max_holding_bars"] == "3"
+    assert run.data.params["swap_cost_pct_per_night"] == "0.0"
 
     registered = client.search_registered_models(filter_string="name = 'test-experiment'")
     assert len(registered) == 1
@@ -96,7 +104,7 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
     assert versions[0].tags["instrument"] == "EUR/USD"
     assert versions[0].tags["granularity"] == "H1"
     assert versions[0].tags["config_signature"]
-    assert versions[0].tags["column_y"] == "pd_lead"
+    assert versions[0].tags["column_y"] == "triple_barrier"
 
     artifact_dir = tmp_path / "downloaded_artifacts"
     predictions_path = next(
@@ -109,3 +117,4 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
     np.testing.assert_array_equal(predictions["test_price"], splits.test["price"])
     np.testing.assert_array_equal(predictions["test_y_raw"], splits.test["y_raw"])
     np.testing.assert_array_equal(predictions["test_spread"], splits.test["spread"])
+    np.testing.assert_array_equal(predictions["test_exit_bar_offset"], splits.test["exit_bar_offset"])

@@ -75,6 +75,7 @@ def _make_splits(seed: int, n_back: int = 10, n_features: int = 3, n_classes: in
     test["price"] = rng.normal(loc=1.1, scale=0.01, size=n_test).astype("float64")
     test["spread"] = rng.uniform(0.0001, 0.0005, size=n_test).astype("float64")
     test["y_raw"] = rng.normal(size=n_test).astype("float64")
+    test["exit_bar_offset"] = rng.integers(1, 4, size=n_test)
 
     return Splits(train=_one(40), val=_one(10), test=test)
 
@@ -109,8 +110,14 @@ def test_report_across_pairs_finds_both_pairs_end_to_end(tmp_path):
         mlflow_tracking_uri=tracking_uri,
     )
 
-    train_and_evaluate(_make_splits(0), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="pd_lead")
-    train_and_evaluate(_make_splits(1), params, "AUD/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="pd_lead")
+    train_and_evaluate(
+        _make_splits(0), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="triple_barrier",
+        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3, swap_cost_pct_per_night=0.0,
+    )
+    train_and_evaluate(
+        _make_splits(1), params, "AUD/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="triple_barrier",
+        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3, swap_cost_pct_per_night=0.0,
+    )
 
     report = report_across_pairs(tracking_uri, "cross-pair-test", baseline="majority")
 
@@ -257,8 +264,16 @@ def test_report_across_pairs_treats_different_n_back_as_separate_hypotheses(tmp_
         mlflow_tracking_uri=tracking_uri,
     )
 
-    train_and_evaluate(_make_splits(0, n_back=10), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="pd_lead")
-    train_and_evaluate(_make_splits(1, n_back=24), params, "EUR/USD", "H1", tmp_path, n_back=24, lookahead=2, column_y="pd_lead")
+    train_and_evaluate(
+        _make_splits(0, n_back=10), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2,
+        column_y="triple_barrier", profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3,
+        swap_cost_pct_per_night=0.0,
+    )
+    train_and_evaluate(
+        _make_splits(1, n_back=24), params, "EUR/USD", "H1", tmp_path, n_back=24, lookahead=2,
+        column_y="triple_barrier", profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3,
+        swap_cost_pct_per_night=0.0,
+    )
 
     report = report_across_pairs(tracking_uri, "n-back-test", baseline="majority")
 

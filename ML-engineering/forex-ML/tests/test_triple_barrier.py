@@ -102,6 +102,10 @@ def test_triple_barrier_labels_is_cost_aware_a_raw_hit_can_become_a_timeout():
     )
     assert with_cost.label[0] == 0
     assert with_cost.net_return_pct[0] == pytest.approx(0.5)
+    # raw_return_pct is the SAME +1.5% either way -- it's the pre-cost move, so a
+    # downstream backtest that charges its own cost doesn't double-count spread/swap.
+    assert zero_cost.raw_return_pct[0] == pytest.approx(1.5)
+    assert with_cost.raw_return_pct[0] == pytest.approx(1.5)
 
 
 def test_triple_barrier_labels_charges_swap_only_once_per_rollover_actually_crossed():
@@ -154,6 +158,7 @@ def test_triple_barrier_labels_from_frame_appends_expected_columns_and_keeps_oth
     assert len(out) == 1
     assert out.iloc[0]["label"] == 1
     assert out.iloc[0]["exit_bar_offset"] == 2
+    assert out.iloc[0]["raw_return_pct"] == pytest.approx(1.5)
     assert out.iloc[0]["instrument"] == "EUR/USD"  # untouched passthrough column
 
 

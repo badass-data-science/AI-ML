@@ -23,10 +23,13 @@ the caller as whatever a long position actually gets charged (e.g. the negative
 of OANDA's `long_rate` financing rate from forex-etl's SwapRateRecord, if
 `long_rate` is negative -- a positive `long_rate` is a credit, not a cost).
 
-This is a standalone labeling/research utility, not yet wired into Stage 1's
-`add_targets`/`column_y` -- replacing the pipeline's production target is a
-bigger, separate decision (retraining, re-validating baselines, etc.) than
-building and testing the labeling method itself.
+This IS the production training target -- `TimeSeriesSplitter`
+(forex_ml/data/splitting.py) calls `triple_barrier_labels_from_frame` once per pair
+in `__init__`, before any train/val/test splitting happens. `pd_lead`/
+`spread_close_lead`/`volatility_lead` (forex_ml/data/features.py's `add_targets`)
+are still computed in Stage 1 but are diagnostic-only reference columns now, not
+selectable training targets -- see the README's "The prediction target:
+triple-barrier labeling" section.
 """
 
 from __future__ import annotations
@@ -68,6 +71,9 @@ class TripleBarrierLabels:
     label: np.ndarray            # +1 profit-take hit, -1 stop-loss hit, 0 timed out
     exit_bar_offset: np.ndarray  # bars from entry to the exit (max_holding_bars if timed out)
     net_return_pct: np.ndarray   # realized % return at the exit bar, net of cost
+    raw_return_pct: np.ndarray   # realized % return at the exit bar, BEFORE cost -- what a
+                                 # downstream backtest (which charges its own cost) should use as
+                                 # "the move," rather than net_return_pct which would double-count it
 
 
 def triple_barrier_labels(
@@ -100,6 +106,7 @@ def triple_barrier_labels(
     label = np.zeros(n_labelable, dtype=int)
     exit_bar_offset = np.full(n_labelable, max_holding_bars, dtype=int)
     net_return_pct = np.zeros(n_labelable, dtype=float)
+    raw_return_pct_out = np.zeros(n_labelable, dtype=float)
 
     for i in range(n_labelable):
         entry_price = price[i]
@@ -115,10 +122,12 @@ def triple_barrier_labels(
 
             if net >= profit_take_pct:
                 label[i], exit_bar_offset[i], net_return_pct[i] = 1, j, net
+                raw_return_pct_out[i] = raw_return_pct
                 hit = True
                 break
             if net <= -stop_loss_pct:
                 label[i], exit_bar_offset[i], net_return_pct[i] = -1, j, net
+                raw_return_pct_out[i] = raw_return_pct
                 hit = True
                 break
 
@@ -127,8 +136,12 @@ def triple_barrier_labels(
             raw_return_pct = 100.0 * (price[i + j] - entry_price) / entry_price
             swap_cost_pct = swap_cost_pct_per_night * count_rollovers_crossed(entry_ts, timestamp[i + j])
             net_return_pct[i] = raw_return_pct - entry_cost_pct - swap_cost_pct
+            raw_return_pct_out[i] = raw_return_pct
 
-    return TripleBarrierLabels(label=label, exit_bar_offset=exit_bar_offset, net_return_pct=net_return_pct)
+    return TripleBarrierLabels(
+        label=label, exit_bar_offset=exit_bar_offset,
+        net_return_pct=net_return_pct, raw_return_pct=raw_return_pct_out,
+    )
 
 
 def triple_barrier_labels_from_frame(
@@ -146,7 +159,7 @@ def triple_barrier_labels_from_frame(
     `df_non_time_series` Parquet output, which carries mid_close/spread_close as
     passthrough reference columns; see COLUMNS_PASSTHROUGH in features.py).
     Returns `df`'s first `len(df) - max_holding_bars` rows with label/
-    exit_bar_offset/net_return_pct columns appended."""
+    exit_bar_offset/net_return_pct/raw_return_pct columns appended."""
     result = triple_barrier_labels(
         df[price_column].to_numpy(),
         df[spread_column].to_numpy(),
@@ -158,4 +171,5 @@ def triple_barrier_labels_from_frame(
     out["label"] = result.label
     out["exit_bar_offset"] = result.exit_bar_offset
     out["net_return_pct"] = result.net_return_pct
+    out["raw_return_pct"] = result.raw_return_pct
     return out

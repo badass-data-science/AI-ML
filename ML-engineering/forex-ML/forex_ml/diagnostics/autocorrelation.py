@@ -135,10 +135,11 @@ def main() -> None:
     parser.add_argument("--instrument", required=True, help="e.g. EUR/USD")
     parser.add_argument("--granularity", required=True, help="e.g. H1")
     parser.add_argument(
-        "--column", default=None,
-        help="Column to diagnose (default: params.yaml's split.column_y -- the actual configured "
-             "target -- rather than a hardcoded name, so switching targets in params.yaml doesn't "
-             "silently leave this diagnosing the wrong column)",
+        "--column", default="pd_lead",
+        help="Column to diagnose (default: pd_lead). The training target is now triple-barrier "
+             "labeling, computed at Stage 2 rather than selected from a named Stage-1 column, so "
+             "there's no longer a single 'the configured target' to default to here -- pd_lead/"
+             "volatility_lead/spread_close_lead remain valid diagnostic reference columns.",
     )
     parser.add_argument("--nlags", type=int, default=250, help="Max lags to check (default: 250)")
     parser.add_argument(
@@ -155,7 +156,7 @@ def main() -> None:
     params = load_params(args.params) if args.params else load_params()
     spark = build_spark_session("forex-ml-acf-pacf-diagnostic", memory=args.spark_memory)
 
-    column = args.column if args.column is not None else params.split.column_y
+    column = args.column
     result = diagnose_pair(
         spark, params.feature.output_dir, args.instrument, args.granularity,
         params.feature.n_back, params.feature.lookahead, column=column, nlags=args.nlags,

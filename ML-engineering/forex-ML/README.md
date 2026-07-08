@@ -102,43 +102,55 @@ that doesn't exist fails immediately instead of three stages later.
 Train/val/test are split strictly by timestamp (`TimeSeriesSplitter` in
 `forex_ml/data/splitting.py`) — never shuffled — so training data is always
 chronologically before validation, which is always before test. `split_flow.py` also
-purges `max(n_back, lookahead)` bars on both sides of each split boundary: a window
-reaches `n_back` bars backward and a label reaches `lookahead` bars forward, so
-without a purge gap the row right at a boundary can have a window or label that
-overlaps the adjacent split. That's not leakage in the sense of the model seeing
-future inputs at inference time, but the two adjacent rows are highly autocorrelated,
-which can optimistically bias the validation/test metric right at the seam (see
-Lopez de Prado's *purged k-fold CV* for the general technique).
+purges `max(n_back, max_holding_bars)` bars on both sides of each split boundary: a
+window reaches `n_back` bars backward and a triple-barrier label can reach
+`max_holding_bars` bars forward, so without a purge gap the row right at a boundary
+can have a window or label that overlaps the adjacent split. That's not leakage in
+the sense of the model seeing future inputs at inference time, but the two adjacent
+rows are highly autocorrelated, which can optimistically bias the validation/test
+metric right at the seam (see Lopez de Prado's *purged k-fold CV* for the general
+technique).
 
-### Switching the prediction target
+### The prediction target: triple-barrier labeling
 
-`split.column_y` is the single knob that picks what the model predicts — switching it
-never requires touching source code, since `split_flow.py` reads it from `params.yaml`
-and passes it explicitly through to `TimeSeriesSplitter`. `add_targets()`
-(`forex_ml/data/features.py`) computes all three candidate targets unconditionally,
-regardless of which one is selected, so Stage 1 output already has every option
-available:
+The training target is **triple-barrier labeling**
+(`forex_ml/data/triple_barrier.py`, wired into `TimeSeriesSplitter`), not a
+fixed-horizon percent change. This replaced an earlier `pd_lead`/`volatility_lead`
+scheme (both still computed in Stage 1 as diagnostic-only reference columns — see
+below — but neither is trainable anymore).
 
-- `pd_lead` — percent change in mid-close over the next `lookahead` bars (direction).
-- `spread_close_lead` — future bid-ask spread.
-- `volatility_lead` — realized high-low range over the next `lookahead` bars (magnitude).
+Each row is labeled by whichever of three barriers is hit first, walking forward
+bar-by-bar from the entry: a **profit-take** barrier (label `+1`), a **stop-loss**
+barrier (label `-1`), or a **max-holding-period** deadline with no barrier hit
+(label `0`, "timed out"). Thresholds are checked against the *net-of-cost* return —
+one round-trip spread charge, plus swap/rollover for every 5pm-New-York boundary
+actually crossed — so a "win" means the trade would have cleared costs, not just
+that price moved the right way. The label maps directly onto the same class
+convention the rest of the pipeline (and `forex-strategy`'s backtest) already
+assumes: `-1 → class 0` (short signal), `0 → class 1` (flat), `+1 → class 2` (long
+signal) — no percentile-threshold fitting needed, since the label is already
+discrete.
 
-The one place this needs care: **diagnostics tools default to whatever
-`split.column_y` currently is**, not a hardcoded name — `forex_ml.diagnostics.autocorrelation`'s
-`--column` flag falls back to `params.split.column_y` specifically so switching targets in
-`params.yaml` doesn't leave a diagnostic silently checking the old one. Pass `--column`
-explicitly only to check a *different* column than the configured target (e.g. `return`,
-to sanity-check a feature rather than the target itself).
+Four `params.yaml` knobs control it, under `split:`:
 
-`pd_lead` vs. `volatility_lead` is a real, empirically-grounded choice, not an arbitrary
-one — see the blog posts for the full investigation. Short version: `return`'s own
-autocorrelation is indistinguishable from noise at every lag checked, and a real
-`n_back=200` training run on `pd_lead` badly underperformed a trivial persistence
-baseline — consistent with direction being close to the efficient-markets wall.
-`volatility_lead`, by contrast, showed genuine multi-year regime drift and long-memory
-autocorrelation staying above the practical-significance threshold out to roughly
-lag 150–200 (`pd_lead`'s equivalent floor was ~4–6 bars) — empirically justifying a
-deep `n_back` window in a way `pd_lead` never did.
+- `profit_take_pct` / `stop_loss_pct` — net-of-cost return thresholds (percent).
+- `max_holding_bars` — the vertical barrier: give up and label `0` after this many
+  bars if neither of the other two was hit.
+- `swap_cost_pct_per_night` — charged once per 5pm-New-York rollover boundary
+  actually crossed (DST-aware). Currently a **configured constant**, not a live
+  rate — forex-ML doesn't ingest forex-etl's `swap-rate` InfluxDB measurement yet;
+  wiring that in is a separate, natural next step.
+
+**None of the four current values have been empirically validated** the way
+`n_back=200` was (via real ACF/PACF diagnostics) — they're starting points to
+revisit once there's a real look at each pair's move-size distribution, not a
+considered final answer. See `params.yaml`'s own comments for the current values.
+
+`pd_lead`/`spread_close_lead`/`volatility_lead` remain valid, useful **reference**
+columns for diagnostics — `forex_ml.diagnostics.autocorrelation`'s `--column` flag
+and `forex_ml.diagnostics.feature_impact`'s `--target` flag both default to
+`pd_lead` (a plain hardcoded default now, not a "whatever the configured target is"
+resolution, since there's no longer a single trainable column name to resolve to).
 
 ### Gradient and input clipping
 
@@ -267,9 +279,10 @@ Every pair registers under the same shared `train.mlflow_experiment_name` — th
 Model Registry has no per-pair identity of its own. Every registered model version is
 tagged at registration time with `instrument`, `granularity`, `config_signature`
 (the same hash `forex_ml/evaluation/multiple_comparisons.py` uses to group runs by
-configuration), and `column_y` (which target this version was trained on), so the
-right version can be found via `MlflowClient.search_model_versions` without grepping
-the source run's logged params:
+configuration), and `column_y` (which target this version was trained on — always
+`"triple_barrier"` for a current training run), so the right version can be found
+via `MlflowClient.search_model_versions` without grepping the source run's logged
+params:
 
 ```python
 from mlflow.tracking import MlflowClient
@@ -277,46 +290,48 @@ from mlflow.tracking import MlflowClient
 client = MlflowClient(tracking_uri="sqlite:///mlflow.db")
 versions = client.search_model_versions(
     "name = 'forex-lstm' and tags.instrument = 'EUR/USD' and tags.granularity = 'H1'"
-    " and tags.column_y = 'pd_lead'"
+    " and tags.column_y = 'triple_barrier'"
 )
 ```
 
-The `column_y` tag matters beyond convenience: a consumer that needs two DIFFERENT
-target models for the same pair (e.g. forex-strategy pairing a directional `pd_lead`
-model with a `volatility_lead` model for position sizing) can't tell them apart from
-`instrument`/`granularity` alone, since both share the same pair — `config_signature`
-differs between them (different `column_y` is itself part of what gets hashed), but
-filtering on `column_y` directly is far more explicit than relying on that
-side-effect.
+`column_y` was originally added to tell `pd_lead`- and `volatility_lead`-trained
+models apart when both could share a pair — moot now that triple-barrier labeling
+is the only trainable target, but the tag stays: it's what lets a consumer reliably
+exclude older, pre-migration model versions (registered before this change, still
+tagged `pd_lead`/`volatility_lead` or untagged entirely) from a search that expects
+the current scheme, without grepping every candidate version's source run.
 
 ### Backtesting support
 
 The `<run_uid>_predictions.npz` artifact (see above) also carries the raw softmax
 probabilities (`lstm_pred_proba`) and the test split's timestamp/price/spread/raw
-target value (`test_timestamp`/`test_price`/`test_spread`/`test_y_raw`) alongside the
-existing correctness booleans used for McNemar's test. A correct/incorrect boolean is
-enough to compare two classifiers, but a real backtest (the sibling
-[`forex-strategy`](../forex-strategy) project) needs to know how confident the model
-was, at what price and spread cost, and what actually happened (the realized % move,
-not just which tercile it landed in) to compute actual P&L, not just accuracy.
+target value/exit timing (`test_timestamp`/`test_price`/`test_spread`/`test_y_raw`/
+`test_exit_bar_offset`) alongside the existing correctness booleans used for
+McNemar's test. A correct/incorrect boolean is enough to compare two classifiers,
+but a real backtest (the sibling [`forex-strategy`](../forex-strategy) project)
+needs to know how confident the model was, at what price and spread cost, what
+actually happened (the realized % move, not just which barrier it hit), and how
+long the trade actually took to resolve, to compute actual P&L, not just accuracy.
 
-Every run also now logs `column_y` as a param (which target this run was trained on),
-for the same reason `n_back`/`lookahead` are logged: two runs on the same pair that
-only differ in prediction target must count as different configurations for
-`multiple_comparisons`'s grouping, not silently collapse together. It also lets a
-downstream consumer check what `y_raw`/`test_y_raw` actually is before treating it as
-a directional quantity — `pd_lead` is a % price change (directional), but
-`volatility_lead` is a magnitude with no direction, so a P&L backtest can't use the
-two interchangeably.
+Every run also logs `column_y` as a param — always `"triple_barrier"` for real
+training runs now, kept as an explicit logged value (not hardcoded away) so a
+downstream consumer can still confirm what `y_raw`/`test_y_raw` is before treating
+it as a directional quantity, and so `multiple_comparisons`'s config-signature
+grouping keeps working exactly as it did when `column_y` distinguished `pd_lead`
+from `volatility_lead` runs.
 
-The same four raw fields are available directly on `Splits.test` (see
+The same fields are available directly on `Splits.test` (see
 `forex_ml/data/splitting.py`) — `price`/`spread` via `COLUMNS_PASSTHROUGH` in
 `forex_ml/data/features.py` (`mid_close`/`spread_close` are the only two of the six
 raw OHLCV columns kept around after feature engineering, explicitly excluded from
-`columns_x` so they're never fed to the model), and `y_raw` is simply the
-undiscretized `column_y` value before `TimeSeriesSplitter` bins it into a class. Only
-the **test** split carries any of this (`train`/`val` stay exactly `{"M", "y"}`)
-since backtesting only ever needs to reconstruct P&L on the held-out set.
+`columns_x` so they're never fed to the model); `y_raw` is `raw_return_pct` (the
+*pre-cost* realized return at the row's actual exit bar — deliberately not
+`net_return_pct`, which is already net of spread/swap and would double-count cost
+if fed to a backtest that charges its own); and `exit_bar_offset` is how many bars
+the label actually took to resolve, letting a backtest compute a real, variable
+holding period instead of assuming a fixed one. Only the **test** split carries any
+of this (`train`/`val` stay exactly `{"M", "y"}`) since backtesting only ever needs
+to reconstruct P&L on the held-out set.
 
 ## Diagnostics
 
@@ -530,27 +545,13 @@ here:
   registry, deployment selection, and is meaningfully heavier compute on a single
   local GPU than a one-off diagnostic run.
 
-## Cost-aware labeling (triple barrier)
+## Cost-aware labeling (triple barrier) — module reference
 
-`forex_ml/data/triple_barrier.py` implements Lopez de Prado's **triple-barrier
-method**: label each candidate entry by whichever of three barriers is hit first —
-an upper (profit-take) barrier, a lower (stop-loss) barrier, or a vertical
-(max-holding-period) barrier — rather than a fixed-horizon percent change like
-`pd_lead`. This is an event-driven notion of "the label" that matches how a real
-trade actually closes (hits its target, hits its stop, or times out), instead of
-always measuring the move over a fixed number of bars regardless of what happened
-along the way.
-
-It's **cost-aware**: `profit_take_pct`/`stop_loss_pct` are thresholds on the *net*
-return, not the raw price move. Spread is charged once as a full round-trip cost
-(same convention `forex_strategy.backtest` uses); swap/rollover is charged once per
-5pm New York rollover boundary *actually crossed* between entry and exit — computed
-DST-aware in local `America/New_York` time (`_count_rollovers_crossed`), not the
-fixed-UTC approximation the trading-session features above use, since an hour's
-error here is the difference between being charged a night's swap or not, not just
-a soft diurnal-pattern approximation. An intraday (H1/M15) hold usually crosses zero
-rollovers; multi-day holds accumulate one charge per night actually held through,
-not one per bar.
+This is the module (`forex_ml/data/triple_barrier.py`) behind "The prediction
+target: triple-barrier labeling" under Configuration above — see that section for
+how it's wired into `TimeSeriesSplitter`/production training. This section is a
+quick reference for using it directly (e.g. ad-hoc analysis outside the normal
+Stage 2 flow):
 
 ```python
 from forex_ml.data.triple_barrier import triple_barrier_labels_from_frame
@@ -562,14 +563,17 @@ labeled = triple_barrier_labels_from_frame(
 )
 ```
 
-This is a **standalone labeling/research utility only** — it is not wired into
-Stage 1's `add_targets`/`column_y`, and `params.yaml`'s `split.column_y` cannot
-select it. Swapping the pipeline's production target for triple-barrier labels is a
-bigger, separate decision (retraining, re-validating baselines, choosing
-profit-take/stop-loss/max-holding hyperparameters) than building and testing the
-labeling method itself. Long-side only for now: the upper barrier is a profit-take
-and the lower a stop-loss *for a long position* — a short-side/bidirectional
-variant would need its own sign convention and isn't built here.
+Swap/rollover is charged once per 5pm New York rollover boundary *actually crossed*
+between entry and exit — computed DST-aware in local `America/New_York` time
+(`count_rollovers_crossed`), not the fixed-UTC approximation the trading-session
+features above use, since an hour's error here is the difference between being
+charged a night's swap or not, not just a soft diurnal-pattern approximation. An
+intraday (H1/M15) hold usually crosses zero rollovers; multi-day holds accumulate
+one charge per night actually held through, not one per bar.
+
+Long-side only: the upper barrier is a profit-take and the lower a stop-loss *for a
+long position* — a short-side/bidirectional variant would need its own sign
+convention and isn't built here.
 
 ## Tests
 

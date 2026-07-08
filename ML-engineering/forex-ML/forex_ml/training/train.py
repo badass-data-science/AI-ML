@@ -72,6 +72,10 @@ def train_and_evaluate(
     n_back: int,
     lookahead: int,
     column_y: str,
+    profit_take_pct: float,
+    stop_loss_pct: float,
+    max_holding_bars: int,
+    swap_cost_pct_per_night: float,
     *,
     experiment_name: str | None = None,
     register_model: bool = True,
@@ -82,20 +86,21 @@ def train_and_evaluate(
     the held-out `splits.test`, and log params/metrics/model to MLflow. Returns the
     dict of test metrics.
 
-    `n_back`/`lookahead`/`column_y` are FeatureParams/SplitParams, not TrainParams,
-    but are logged here anyway (not just used to locate the splits file / interpret
-    y_raw) so that forex_ml.evaluation.multiple_comparisons's config-signature hash
-    can tell two runs with different windowing OR different prediction targets apart.
-    Without this, two runs that only differ in n_back (or in column_y -- e.g. one
-    trained on pd_lead, one on volatility_lead) would log an otherwise-IDENTICAL set
-    of params and get silently collapsed into "the same configuration, just
-    retrained" -- keeping only the most recent one and discarding the other, exactly
-    the failure mode that whole-config hashing was built to prevent. Logging
-    `column_y` also lets a downstream consumer (forex-strategy's backtest) check
-    which raw target `Splits.test["y_raw"]`/the predictions.npz artifact's
-    `test_y_raw` actually is before treating it as a directional quantity -- e.g. a
-    volatility_lead run's y_raw is a magnitude, not the % price change a P&L
-    backtest needs.
+    `n_back`/`lookahead`/`column_y`/`profit_take_pct`/`stop_loss_pct`/
+    `max_holding_bars`/`swap_cost_pct_per_night` are FeatureParams/SplitParams, not
+    TrainParams, but are logged here anyway (not just used to locate the splits file
+    / interpret y_raw) so that forex_ml.evaluation.multiple_comparisons's
+    config-signature hash can tell two runs with different windowing, barrier
+    hyperparameters, OR prediction targets apart. Without this, two runs that only
+    differ in one of these would log an otherwise-IDENTICAL set of params and get
+    silently collapsed into "the same configuration, just retrained" -- keeping only
+    the most recent one and discarding the other, exactly the failure mode that
+    whole-config hashing was built to prevent. `column_y` is always `"triple_barrier"`
+    for real training runs now (kept as an explicit param, not hardcoded, so it still
+    flows through logging/tagging uniformly) -- lets a downstream consumer
+    (forex-strategy's backtest) confirm what `Splits.test["y_raw"]`/the
+    predictions.npz artifact's `test_y_raw` actually is before treating it as a
+    directional quantity.
 
     `experiment_name`/`register_model`/`extra_params`/`run_name_suffix` exist for
     forex_ml.evaluation.rolling_cv, which trains many folds of the SAME
@@ -131,6 +136,10 @@ def train_and_evaluate(
             "n_back": n_back,
             "lookahead": lookahead,
             "column_y": column_y,
+            "profit_take_pct": profit_take_pct,
+            "stop_loss_pct": stop_loss_pct,
+            "max_holding_bars": max_holding_bars,
+            "swap_cost_pct_per_night": swap_cost_pct_per_night,
             **params.model_dump(exclude={"mlflow_experiment_name", "mlflow_tracking_uri"}),
             **(extra_params or {}),
         }
@@ -182,11 +191,12 @@ def train_and_evaluate(
         # test set; persistence_correct is one row shorter (see persistence_baseline).
         #
         # Also saved: the raw softmax probabilities (not just top-1 correctness) and
-        # the test row's timestamp/price/spread/y_raw from splits.test (see
-        # forex_ml.data.splitting.Splits) -- a real backtest (forex-strategy) needs
-        # "how confident was the model, at what price, at what spread cost, and what
-        # was the actual realized outcome" per row, which a correct/incorrect boolean
-        # alone can't answer.
+        # the test row's timestamp/price/spread/y_raw/exit_bar_offset from
+        # splits.test (see forex_ml.data.splitting.Splits) -- a real backtest
+        # (forex-strategy) needs "how confident was the model, at what price, at
+        # what spread cost, what was the actual realized outcome, and how long did
+        # the trade actually take to resolve" per row, which a correct/incorrect
+        # boolean alone can't answer.
         lstm_pred_proba = model.predict(splits.test["M"], verbose=0)
         lstm_pred_idx = np.argmax(lstm_pred_proba, axis=1)
         lstm_true_idx = np.argmax(splits.test["y"], axis=1)
@@ -201,6 +211,7 @@ def train_and_evaluate(
             test_price=splits.test["price"],
             test_spread=splits.test["spread"],
             test_y_raw=splits.test["y_raw"],
+            test_exit_bar_offset=splits.test["exit_bar_offset"],
         )
         mlflow.log_artifact(str(predictions_path))
 
@@ -243,7 +254,9 @@ def run(instrument: str, granularity: str, params_path: str | Path | None = None
     splits = Splits.load_npz(splits_npz_path(params.feature.output_dir, key))
     return train_and_evaluate(
         splits, params.train, instrument, granularity, Path(params.feature.output_dir),
-        params.feature.n_back, params.feature.lookahead, params.split.column_y,
+        params.feature.n_back, params.feature.lookahead, "triple_barrier",
+        params.split.profit_take_pct, params.split.stop_loss_pct,
+        params.split.max_holding_bars, params.split.swap_cost_pct_per_night,
     )
 
 

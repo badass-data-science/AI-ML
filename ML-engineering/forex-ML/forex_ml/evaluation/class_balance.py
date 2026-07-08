@@ -1,13 +1,14 @@
 """Class balance reporting — a cheap check for silent regime drift.
 
-The tertile class thresholds are computed once from TRAINING-period quantiles of
-whichever column `split.column_y` in params.yaml names (`pd_lead`, `volatility_lead`,
-etc. — see TimeSeriesSplitter), so by construction train's class
-balance is close to even. Val/test are NOT guaranteed to be: if volatility regime
-shifts between periods (routine for FX), a threshold calibrated on a calm training
-period can make a later volatile test period look mostly "extreme class", or vice
-versa. Reporting the actual balance for all three splits, every run, surfaces that
-drift directly instead of leaving it hidden inside a single accuracy number.
+The training target is triple-barrier labeling (see TimeSeriesSplitter/
+forex_ml.data.triple_barrier): each row is labeled by whichever of a profit-take,
+stop-loss, or max-holding-period barrier is hit first. Train's class balance isn't
+guaranteed to be even the way percentile-threshold binning used to make it (there's
+no train-quantile fitting step anymore), and val/test can drift further still if the
+volatility/trend regime shifts between periods (routine for FX) — a market regime
+where profit-take barriers get hit often can look completely different a year later.
+Reporting the actual balance for all three splits, every run, surfaces that drift
+directly instead of leaving it hidden inside a single accuracy number.
 """
 
 from __future__ import annotations

@@ -75,7 +75,7 @@ def run_rolling_cv(
     that still clears the baseline every fold reads differently than one that
     doesn't. See the module docstring for "sliding" vs "expanding".
 
-    `purge_bars` defaults to `max(n_back, lookahead)` — the same choice
+    `purge_bars` defaults to `max(n_back, max_holding_bars)` — the same choice
     `split_flow.py` makes for the single official split, for the same reason (a
     window/label can reach that far across a boundary).
     """
@@ -87,17 +87,18 @@ def run_rolling_cv(
         str(time_series_parquet_path(params.feature.output_dir, key)),
         str(non_time_series_parquet_path(params.feature.output_dir, key)),
         params.split.columns_x,
-        params.split.column_y,
     )
     splitter = TimeSeriesSplitter(
         pdf, pdf_non_time_series, instrument, granularity,
         columns_x_components=params.split.columns_x,
-        class_cutoff_percentiles=params.split.class_cutoff_percentiles,
-        column_y=params.split.column_y,
+        profit_take_pct=params.split.profit_take_pct,
+        stop_loss_pct=params.split.stop_loss_pct,
+        max_holding_bars=params.split.max_holding_bars,
+        swap_cost_pct_per_night=params.split.swap_cost_pct_per_night,
     )
 
     resolved_purge_bars = (
-        purge_bars if purge_bars is not None else max(params.feature.n_back, params.feature.lookahead)
+        purge_bars if purge_bars is not None else max(params.feature.n_back, params.split.max_holding_bars)
     )
     folds = splitter.rolling_folds(
         n_folds=n_folds, min_train_bars=min_train_bars, val_bars=val_bars, test_bars=test_bars,
@@ -111,7 +112,9 @@ def run_rolling_cv(
     for i, fold_splits in enumerate(folds):
         result = train_and_evaluate(
             fold_splits, params.train, instrument, granularity, Path(params.feature.output_dir),
-            params.feature.n_back, params.feature.lookahead, params.split.column_y,
+            params.feature.n_back, params.feature.lookahead, "triple_barrier",
+            params.split.profit_take_pct, params.split.stop_loss_pct,
+            params.split.max_holding_bars, params.split.swap_cost_pct_per_night,
             experiment_name=experiment_name,
             register_model=False,
             extra_params={"fold_index": i, "window_type": window, "diagnostic": "rolling_cv"},
@@ -189,7 +192,7 @@ def main() -> None:
     parser.add_argument("--test-bars", type=int, required=True)
     parser.add_argument(
         "--purge-bars", type=int, default=None,
-        help="Default: max(feature.n_back, feature.lookahead) from params.yaml",
+        help="Default: max(feature.n_back, split.max_holding_bars) from params.yaml",
     )
     parser.add_argument("--params", default=None, help="Path to params.yaml (default: repo root)")
     parser.add_argument(

@@ -465,6 +465,13 @@ def main() -> None:
     parser.add_argument("--instrument", required=True, help="e.g. EUR/USD")
     parser.add_argument("--granularity", required=True, help="e.g. H1")
     parser.add_argument(
+        "--target", default="pd_lead",
+        help="Column to screen candidates against (default: pd_lead). The training target is now "
+             "triple-barrier labeling, computed at Stage 2 rather than selected from a named Stage-1 "
+             "column, so there's no longer a single 'the configured target' to default to here -- "
+             "pd_lead/volatility_lead/spread_close_lead remain valid Stage-1 reference columns.",
+    )
+    parser.add_argument(
         "--candidates", default=None,
         help="Comma-separated column names to evaluate (default: params.yaml's split.columns_x). "
              "Can be ANY column Stage 1 produces, including ones not yet in columns_x. "
@@ -497,7 +504,7 @@ def main() -> None:
         candidate_pairs = _parse_cross_pair_candidates(args.cross_pair_candidates)
         result = analyze_cross_pair_feature_impact(
             spark, params.feature.output_dir, args.instrument, args.granularity,
-            params.feature.n_back, params.feature.lookahead, params.split.column_y, candidate_pairs,
+            params.feature.n_back, params.feature.lookahead, args.target, candidate_pairs,
             ccf_max_lag=args.ccf_max_lag, granger_lag=args.granger_lag,
             var_lag_order=args.var_lag_order, var_horizon=args.var_horizon, lasso_max_lag=args.lasso_max_lag,
         )
@@ -505,11 +512,11 @@ def main() -> None:
         candidate_columns = args.candidates.split(",") if args.candidates else list(params.split.columns_x)
         result = analyze_feature_impact(
             spark, params.feature.output_dir, args.instrument, args.granularity,
-            params.feature.n_back, params.feature.lookahead, params.split.column_y, candidate_columns,
+            params.feature.n_back, params.feature.lookahead, args.target, candidate_columns,
             ccf_max_lag=args.ccf_max_lag, granger_lag=args.granger_lag,
             var_lag_order=args.var_lag_order, var_horizon=args.var_horizon, lasso_max_lag=args.lasso_max_lag,
         )
-    _print_report(args.instrument, args.granularity, params.split.column_y, result)
+    _print_report(args.instrument, args.granularity, args.target, result)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.types import ArrayType, FloatType
 
 from forex_ml.data.features import COLUMNS_PASSTHROUGH
+from forex_ml.data.triple_barrier import triple_barrier_labels_from_frame
 
 def _stack_time_series_fn(*series: list[float]) -> list[list[float]]:
     """Stack per-feature n_back-length arrays into one (n_back, num_features) matrix
@@ -47,7 +48,6 @@ def load_and_stack(
     time_series_parquet_path: str,
     non_time_series_parquet_path: str,
     columns_x: list[str],
-    column_y: str,
     columns_passthrough: list[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load Stage-1 Parquet outputs and stack the per-feature arrays in `columns_x`
@@ -55,9 +55,15 @@ def load_and_stack(
     `columns_x` order passed to TimeSeriesSplitter later — the X array's feature axis
     has no column names, only positions.
 
+    No target column is selected here — the training target is computed by
+    TimeSeriesSplitter itself via triple-barrier labeling (see that class's
+    docstring), not selected from a Stage-1 column by name.
+
     `columns_passthrough` (default: COLUMNS_PASSTHROUGH, i.e. mid_close/spread_close)
-    are carried through unchanged alongside X/y -- never fed to the model, but needed
-    by TimeSeriesSplitter to attach the test split's raw price/spread for backtesting.
+    are carried through unchanged alongside X -- never fed to the model, but needed
+    by TimeSeriesSplitter both to compute triple-barrier labels (mid_close/
+    spread_close/unix_epoch_s) and to attach the test split's raw price/spread for
+    backtesting.
     """
     columns_passthrough = list(COLUMNS_PASSTHROUGH) if columns_passthrough is None else columns_passthrough
     columns_non_time_series_to_keep = ["instrument", "granularity", "unix_epoch_s", *columns_x]
@@ -73,7 +79,7 @@ def load_and_stack(
     df_time_series = (
         df_time_series
         .withColumn("X", _stack_time_series(*column_objects))
-        .select("instrument", "granularity", "unix_epoch_s", column_y, "X", *columns_passthrough)
+        .select("instrument", "granularity", "unix_epoch_s", "X", *columns_passthrough)
         .orderBy("instrument", "granularity", "unix_epoch_s")
     )
 
@@ -99,10 +105,12 @@ class Splits:
         so loading it can't execute arbitrary code, and per-pair files stay small
         instead of one shared, unversioned 684MB pickle.
 
-        `test` carries four extra keys (timestamp/price/spread/y_raw) that train/val
-        don't -- a backtest only ever needs to reconstruct P&L on the held-out test
-        set, so train/val stay exactly {"M", "y"} rather than carrying reference data
-        nothing reads.
+        `test` carries five extra keys (timestamp/price/spread/y_raw/exit_bar_offset)
+        that train/val don't -- a backtest only ever needs to reconstruct P&L on the
+        held-out test set, so train/val stay exactly {"M", "y"} rather than carrying
+        reference data nothing reads. `exit_bar_offset` (how many bars the
+        triple-barrier label actually took to resolve) lets a backtest compute a
+        real, variable holding period instead of assuming a fixed one.
         """
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(
@@ -111,7 +119,7 @@ class Splits:
             val_M=self.val["M"], val_y=self.val["y"],
             test_M=self.test["M"], test_y=self.test["y"],
             test_timestamp=self.test["timestamp"], test_price=self.test["price"], test_spread=self.test["spread"],
-            test_y_raw=self.test["y_raw"],
+            test_y_raw=self.test["y_raw"], test_exit_bar_offset=self.test["exit_bar_offset"],
         )
 
     @classmethod
@@ -123,18 +131,27 @@ class Splits:
             test={
                 "M": data["test_M"], "y": data["test_y"],
                 "timestamp": data["test_timestamp"], "price": data["test_price"], "spread": data["test_spread"],
-                "y_raw": data["test_y_raw"],
+                "y_raw": data["test_y_raw"], "exit_bar_offset": data["test_exit_bar_offset"],
             },
         )
 
 
 class TimeSeriesSplitter:
-    """Time-ordered train/val/test split, class discretization, and train-only
+    """Time-ordered train/val/test split, triple-barrier labeling, and train-only
     normalization for one (instrument, granularity) pair.
 
-    Refactor of the notebook's `Base` class: same math, pandas-only, no Spark
-    dependency, fully unit-testable.
+    Refactor of the notebook's `Base` class: same split/normalization math,
+    pandas-only, no Spark dependency, fully unit-testable. The training target
+    itself is computed here via `triple_barrier_labels_from_frame` (see
+    forex_ml/data/triple_barrier.py) rather than selected from a pre-computed
+    Stage-1 column: label each row by whichever of a profit-take, stop-loss, or
+    max-holding-period barrier is hit first, net of round-trip spread and any
+    swap/rollover for a 5pm-New-York boundary actually crossed. The label is
+    already discrete ({-1, 0, +1}), so there's no percentile-threshold fitting
+    step anymore -- see `_label_to_one_hot`.
     """
+
+    _LABEL_TO_ONE_HOT = {-1: [1, 0, 0], 0: [0, 1, 0], 1: [0, 0, 1]}
 
     def __init__(
         self,
@@ -143,9 +160,11 @@ class TimeSeriesSplitter:
         instrument: str,
         granularity: str,
         columns_x_components: list[str],
+        profit_take_pct: float,
+        stop_loss_pct: float,
+        max_holding_bars: int,
+        swap_cost_pct_per_night: float = 0.0,
         timestamp_column: str = "unix_epoch_s",
-        class_cutoff_percentiles: list[float] | None = None,
-        column_y: str = "pd_lead",
     ) -> None:
         """`columns_x_components` MUST be the same list, in the same order, as the
         `columns_x` passed to `load_and_stack()` — it indexes into the stacked X
@@ -153,13 +172,23 @@ class TimeSeriesSplitter:
         self.instrument = instrument
         self.granularity = granularity
         self.timestamp_column = timestamp_column
-        self.column_y = column_y
         self.columns_x_components = columns_x_components
-        self.class_cutoff_percentiles = list(class_cutoff_percentiles or [100.0 / 3.0, 200.0 / 3.0])
 
-        self.df = (
+        df_pair = (
             df[(df["instrument"] == instrument) & (df["granularity"] == granularity)]
             .copy().sort_values(by=timestamp_column).reset_index(drop=True)
+        )
+        # Computed ONCE across the full per-pair series, before any splitting --
+        # mirrors how Stage 1 currently pre-computes pd_lead/volatility_lead once,
+        # rather than per-split (which would let each split's boundary rows use a
+        # slightly different labeling window). Shortens the frame by
+        # max_holding_bars, the same shape of trimming pd_lead's fixed lookahead
+        # window used to require.
+        self.df = triple_barrier_labels_from_frame(
+            df_pair,
+            profit_take_pct=profit_take_pct, stop_loss_pct=stop_loss_pct,
+            max_holding_bars=max_holding_bars, swap_cost_pct_per_night=swap_cost_pct_per_night,
+            price_column="mid_close", spread_column="spread_close", timestamp_column=timestamp_column,
         )
         self.df_non_time_series = (
             df_non_time_series[
@@ -168,6 +197,10 @@ class TimeSeriesSplitter:
             ]
             .copy().sort_values(by=timestamp_column).reset_index(drop=True)
         )
+
+    @classmethod
+    def _label_to_one_hot(cls, label_values: np.ndarray) -> list[list[int]]:
+        return [cls._LABEL_TO_ONE_HOT[int(label)] for label in label_values]
 
     def _slice_by_timestamp(self, lo: float, hi: float, *, inclusive_hi: bool = False) -> pd.DataFrame:
         mask = (self.df[self.timestamp_column] >= lo) & (
@@ -194,8 +227,8 @@ class TimeSeriesSplitter:
         training data. Neither is leakage in the sense of the model seeing future
         inputs at inference time — but the two adjacent rows are highly
         autocorrelated, which can optimistically bias the validation/test metric
-        right at the seam. Pass `max(n_back, lookahead)` as `purge_bars` to remove
-        exactly the rows capable of that overlap.
+        right at the seam. Pass `max(n_back, max_holding_bars)` as `purge_bars` to
+        remove exactly the rows capable of that overlap.
         """
         min_ts = self.df[self.timestamp_column].min()
         max_ts = self.df[self.timestamp_column].max()
@@ -210,18 +243,6 @@ class TimeSeriesSplitter:
             train_stop + purge_seconds, val_stop - purge_seconds,
             val_stop + purge_seconds, max_ts,
         )
-
-    @staticmethod
-    def _compute_outcome(y_values: np.ndarray, percentiles: np.ndarray) -> list[list[int]]:
-        outcome = []
-        for y in y_values:
-            if y <= percentiles[0]:
-                outcome.append([1, 0, 0])
-            elif y <= percentiles[1]:
-                outcome.append([0, 1, 0])
-            else:
-                outcome.append([0, 0, 1])
-        return outcome
 
     def _rolling_boundaries(
         self,
@@ -299,10 +320,9 @@ class TimeSeriesSplitter:
         df_val = self._slice_by_timestamp(val_lo, val_hi)
         df_test = self._slice_by_timestamp(test_lo, test_hi, inclusive_hi=True)
 
-        percentiles = np.percentile(df_train[self.column_y].to_numpy(), self.class_cutoff_percentiles)
-        df_train["outcome"] = self._compute_outcome(df_train[self.column_y].to_numpy(), percentiles)
-        df_val["outcome"] = self._compute_outcome(df_val[self.column_y].to_numpy(), percentiles)
-        df_test["outcome"] = self._compute_outcome(df_test[self.column_y].to_numpy(), percentiles)
+        df_train["outcome"] = self._label_to_one_hot(df_train["label"].to_numpy())
+        df_val["outcome"] = self._label_to_one_hot(df_val["label"].to_numpy())
+        df_test["outcome"] = self._label_to_one_hot(df_test["label"].to_numpy())
 
         X_train = np.array([np.array(row) for row in df_train["X"].to_numpy()])
         X_val = np.array([np.array(row) for row in df_val["X"].to_numpy()])
@@ -342,11 +362,17 @@ class TimeSeriesSplitter:
                 "timestamp": df_test[self.timestamp_column].to_numpy(),
                 "price": df_test["mid_close"].to_numpy(),
                 "spread": df_test["spread_close"].to_numpy(),
-                # The undiscretized column_y value itself (e.g. the realized %
-                # pd_lead), not just which tercile it fell into -- "outcome"/"y" tells
-                # you the model's classification target, but a backtest computing
-                # actual $ P&L needs the realized magnitude, which binning discards.
-                "y_raw": df_test[self.column_y].to_numpy(),
+                # The pre-cost realized return at the row's actual exit bar, not just
+                # which barrier it hit -- "outcome"/"y" tells you the model's
+                # classification target, a backtest computing actual $ P&L needs the
+                # realized magnitude. raw_return_pct (not net_return_pct, which is
+                # already net of spread/swap) so a backtest charging its own cost
+                # doesn't double-count it -- see triple_barrier.py's docstring.
+                "y_raw": df_test["raw_return_pct"].to_numpy(),
+                # How many bars this row's label actually took to resolve -- lets a
+                # backtest compute a real, variable holding period (and therefore
+                # accurate swap-cost accounting) instead of assuming a fixed one.
+                "exit_bar_offset": df_test["exit_bar_offset"].to_numpy(),
             },
         )
 

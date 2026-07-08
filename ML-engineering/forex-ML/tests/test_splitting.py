@@ -20,7 +20,6 @@ def _make_pdf(n: int, n_back: int = 5, n_features: int = 3) -> pd.DataFrame:
         "instrument": "EUR/USD",
         "granularity": "H1",
         "unix_epoch_s": timestamps,
-        "pd_lead": rng.normal(size=n),
         "X": list(X),
         "mid_close": rng.normal(loc=1.1, scale=0.01, size=n),
         "spread_close": rng.uniform(0.0001, 0.0005, size=n),
@@ -39,19 +38,27 @@ def _make_non_ts(n: int, n_features: int = 3) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
+MAX_HOLDING_BARS = 3  # small relative to the n used across these tests, so existing
+                      # fold configs (sized against ~n bars) still comfortably fit
+                      # after triple-barrier labeling trims the last MAX_HOLDING_BARS
+                      # rows off the usable frame.
+
+
 def _splitter(n: int) -> TimeSeriesSplitter:
     return TimeSeriesSplitter(
         _make_pdf(n), _make_non_ts(n), "EUR/USD", "H1", columns_x_components=COLUMNS_X_COMPONENTS,
+        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=MAX_HOLDING_BARS,
     )
 
 
 def test_split_covers_every_row_with_no_overlap():
     n = 100
-    splits = _splitter(n).split_train_val_test_by_proportion([0.7, 0.15])
+    splitter = _splitter(n)
+    splits = splitter.split_train_val_test_by_proportion([0.7, 0.15])
 
     total = len(splits.train["y"]) + len(splits.val["y"]) + len(splits.test["y"])
-    assert total == n
-    assert 0.6 < len(splits.train["y"]) / n < 0.8
+    assert total == len(splitter.df)  # n minus the rows triple-barrier labeling trims
+    assert 0.6 < len(splits.train["y"]) / len(splitter.df) < 0.8
 
 
 def test_outcome_is_one_hot_over_three_classes():
@@ -87,18 +94,45 @@ def test_npz_round_trip(tmp_path):
     np.testing.assert_array_equal(splits.test["price"], loaded.test["price"])
     np.testing.assert_array_equal(splits.test["spread"], loaded.test["spread"])
     np.testing.assert_array_equal(splits.test["y_raw"], loaded.test["y_raw"])
+    np.testing.assert_array_equal(splits.test["exit_bar_offset"], loaded.test["exit_bar_offset"])
 
 
-def test_test_split_y_raw_matches_the_undiscretized_column_y_value():
-    """y_raw must be the actual pd_lead value, not just which tercile it fell into --
-    a backtest computing $ P&L needs the realized magnitude, which "outcome"/"y" (the
-    one-hot class) discards by construction."""
+def test_test_split_y_raw_matches_raw_return_pct_not_net_of_cost():
+    """y_raw must be the pre-cost raw_return_pct, not net_return_pct or just which
+    barrier was hit -- a backtest computing $ P&L needs the realized magnitude
+    (and applies its own cost, so a pre-net-of-cost value would double-count it),
+    which "outcome"/"y" (the one-hot class) discards by construction."""
     splitter = _splitter(100)
     splits = splitter.split_train_val_test_by_proportion([0.7, 0.15])
 
-    lookup = splitter.df.set_index("unix_epoch_s")["pd_lead"]
+    lookup = splitter.df.set_index("unix_epoch_s")["raw_return_pct"]
     expected = lookup.loc[splits.test["timestamp"]].to_numpy()
     np.testing.assert_array_equal(splits.test["y_raw"], expected)
+
+
+def test_test_split_exit_bar_offset_matches_the_labeled_frame():
+    splitter = _splitter(100)
+    splits = splitter.split_train_val_test_by_proportion([0.7, 0.15])
+
+    lookup = splitter.df.set_index("unix_epoch_s")["exit_bar_offset"]
+    expected = lookup.loc[splits.test["timestamp"]].to_numpy()
+    np.testing.assert_array_equal(splits.test["exit_bar_offset"], expected)
+    assert (splits.test["exit_bar_offset"] >= 1).all()
+    assert (splits.test["exit_bar_offset"] <= MAX_HOLDING_BARS).all()
+
+
+def test_outcome_one_hot_mapping_matches_the_underlying_label():
+    """-1 (stop-loss) -> class 0 (short signal), 0 (timeout) -> class 1 (flat),
+    +1 (profit-take) -> class 2 (long signal) -- the exact convention
+    forex_strategy.backtest.predicted_classes_to_positions already assumes."""
+    splitter = _splitter(100)
+    splits = splitter.split_train_val_test_by_proportion([0.7, 0.15])
+
+    label_lookup = splitter.df.set_index("unix_epoch_s")["label"]
+    expected_labels = label_lookup.loc[splits.test["timestamp"]].to_numpy()
+    expected_class = np.where(expected_labels == -1, 0, np.where(expected_labels == 0, 1, 2))
+    actual_class = np.argmax(splits.test["y"], axis=1)
+    np.testing.assert_array_equal(actual_class, expected_class)
 
 
 def test_load_and_stack_produces_timesteps_by_features_shape(spark, tmp_path):
@@ -142,7 +176,7 @@ def test_load_and_stack_produces_timesteps_by_features_shape(spark, tmp_path):
     # about mid_close/spread_close passthrough -- the synthetic frames above don't
     # have those columns, so don't ask load_and_stack to select them.
     pdf, _ = load_and_stack(
-        spark, str(ts_path), str(non_ts_path), ["feat_a", "feat_b"], "pd_lead", columns_passthrough=[],
+        spark, str(ts_path), str(non_ts_path), ["feat_a", "feat_b"], columns_passthrough=[],
     )
 
     X = np.array(pdf.loc[0, "X"])
