@@ -22,6 +22,8 @@ def _make_splits(n_back: int = 10, n_features: int = 3, n_classes: int = 3, seed
     test["price"] = rng.normal(loc=1.10, scale=0.01, size=n_test).astype("float64")
     test["spread"] = rng.uniform(0.0001, 0.0003, size=n_test).astype("float64")
     test["y_raw"] = rng.normal(scale=0.2, size=n_test).astype("float64")
+    test["exit_bar_offset"] = rng.integers(1, 4, size=n_test)
+    test["realized_volatility"] = rng.uniform(0.0005, 0.005, size=n_test)
 
     return Splits(train=_one(60), val=_one(20), test=test)
 
@@ -54,43 +56,16 @@ def _train_params(tmp_path, experiment_name: str) -> TrainParams:
 
 
 @pytest.fixture
-def trained_pd_lead_model(tmp_path):
-    """Trains and registers a tiny real pd_lead model into a scratch MLflow store --
-    the same pattern forex-ML's own test_train_smoke.py uses -- so forex-strategy's
-    model-loading/backtest code can be exercised against a real registered model and
-    a real predictions.npz artifact, not a hand-mocked stand-in."""
+def trained_triple_barrier_model(tmp_path):
+    """Trains and registers a tiny real triple-barrier model into a scratch MLflow
+    store -- the same pattern forex-ML's own test_train_smoke.py uses -- so
+    forex-strategy's model-loading/backtest code can be exercised against a real
+    registered model and a real predictions.npz artifact, not a hand-mocked
+    stand-in."""
     params = _train_params(tmp_path, "forex-lstm")
     splits = _make_splits(seed=0)
-    train_and_evaluate(splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="pd_lead")
-    return {"tracking_uri": params.mlflow_tracking_uri, "splits": splits}
-
-
-@pytest.fixture
-def trained_volatility_lead_model(tmp_path):
-    """Same as trained_pd_lead_model, but trained on volatility_lead -- used to check
-    that the backtest correctly refuses to run against a non-directional target."""
-    params = _train_params(tmp_path, "forex-lstm")
-    splits = _make_splits(seed=1)
-    train_and_evaluate(splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="volatility_lead")
-    return {"tracking_uri": params.mlflow_tracking_uri, "splits": splits}
-
-
-@pytest.fixture
-def trained_pd_lead_and_volatility_models(tmp_path):
-    """Trains and registers BOTH a pd_lead and a volatility_lead model for the same
-    pair into the SAME scratch MLflow store -- for exercising the volatility-gated
-    position-sizing path in run_backtest.py, which needs to look up and combine two
-    distinct registered versions. _make_splits' test["timestamp"] doesn't depend on
-    `seed`, so both models' test sets are already row-aligned by timestamp, exactly
-    as the real pipeline guarantees when both are trained with the same
-    n_back/lookahead/split configuration."""
-    params = _train_params(tmp_path, "forex-lstm")
-    pd_lead_splits = _make_splits(seed=0)
-    volatility_splits = _make_splits(seed=1)
     train_and_evaluate(
-        pd_lead_splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="pd_lead",
+        splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="triple_barrier",
+        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3, swap_cost_pct_per_night=0.0,
     )
-    train_and_evaluate(
-        volatility_splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="volatility_lead",
-    )
-    return {"tracking_uri": params.mlflow_tracking_uri, "pd_lead_splits": pd_lead_splits}
+    return {"tracking_uri": params.mlflow_tracking_uri, "splits": splits}

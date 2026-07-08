@@ -40,10 +40,12 @@ def find_model_version(
     no sensible fallback (e.g. "just pick any version") for a caller asking for a
     specific pair.
 
-    `column_y` matters beyond convenience: two DIFFERENT target models can share
-    the same (instrument, granularity) -- e.g. a directional `pd_lead` model and a
-    `volatility_lead` model for the same pair, needed together for volatility-gated
-    position sizing (see backtest.py) -- and aren't distinguishable without it.
+    `column_y` matters beyond convenience: forex-ML's production target is now
+    always `"triple_barrier"`, but older, pre-migration model versions may still be
+    registered for the same (instrument, granularity), tagged `pd_lead`/
+    `volatility_lead` or untagged entirely -- filtering on `column_y="triple_barrier"`
+    (see run_backtest.py) is what excludes those from a search that expects the
+    current scheme, without grepping every candidate version's source run.
     """
     filter_parts = [
         f"name = '{registered_model_name}'",
@@ -86,7 +88,8 @@ def load_keras_model(resolved: ResolvedModel):
 def load_test_predictions(client: MlflowClient, run_id: str, download_dir: str) -> dict[str, np.ndarray]:
     """Download and load the `<run_uid>_predictions.npz` artifact forex_ml.training.train
     logs for this run: lstm_pred_proba/test_timestamp/test_price/test_spread/
-    test_y_raw/lstm_correct/majority_correct/persistence_correct."""
+    test_y_raw/test_exit_bar_offset/test_realized_volatility/lstm_correct/
+    majority_correct/persistence_correct."""
     artifact_path = next(a.path for a in client.list_artifacts(run_id) if a.path.endswith("_predictions.npz"))
     local_path = client.download_artifacts(run_id, artifact_path, download_dir)
     return dict(np.load(local_path))

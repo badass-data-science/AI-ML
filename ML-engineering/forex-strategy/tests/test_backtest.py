@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from forex_strategy.backtest import (
-    position_size_from_predicted_volatility_class,
+    position_size_from_realized_volatility,
     predicted_classes_to_positions,
     simulate_trades,
 )
@@ -84,19 +84,25 @@ def test_simulate_trades_rejects_mismatched_lengths():
         simulate_trades(np.array([1, 0]), np.array([0.1]), np.array([0.0002, 0.0002]), np.array([1.1, 1.1]))
 
 
-def test_position_size_from_predicted_volatility_class_maps_terciles_to_sizes():
-    sizes = position_size_from_predicted_volatility_class(np.array([0, 1, 2, 0]))
-    np.testing.assert_array_equal(sizes, [1.0, 0.6, 0.3, 1.0])
+def test_position_size_from_realized_volatility_scales_inversely_with_recent_volatility():
+    realized_volatility = np.array([0.001, 0.002, 0.004])
+    sizes = position_size_from_realized_volatility(realized_volatility, target_volatility=0.002, max_size=2.0)
+    np.testing.assert_allclose(sizes, [2.0, 1.0, 0.5])  # row 0 would be 2.0 exactly, clipped at max_size anyway
 
 
-def test_position_size_from_predicted_volatility_class_accepts_custom_sizes():
-    sizes = position_size_from_predicted_volatility_class(np.array([0, 2]), size_by_class=(2.0, 1.0, 0.0))
-    np.testing.assert_array_equal(sizes, [2.0, 0.0])
+def test_position_size_from_realized_volatility_clips_at_max_size():
+    sizes = position_size_from_realized_volatility(np.array([0.0001]), target_volatility=0.002, max_size=1.5)
+    np.testing.assert_allclose(sizes, [1.5])
 
 
-def test_position_size_from_predicted_volatility_class_rejects_out_of_range():
-    with pytest.raises(ValueError, match="0, 1, 2"):
-        position_size_from_predicted_volatility_class(np.array([0, 3]))
+def test_position_size_from_realized_volatility_zero_volatility_clips_to_max_size_without_dividing_by_zero():
+    sizes = position_size_from_realized_volatility(np.array([0.0]), target_volatility=0.002, max_size=1.5)
+    np.testing.assert_allclose(sizes, [1.5])
+
+
+def test_position_size_from_realized_volatility_rejects_negative_values():
+    with pytest.raises(ValueError, match="non-negative"):
+        position_size_from_realized_volatility(np.array([-0.001]), target_volatility=0.002)
 
 
 def test_simulate_trades_position_size_scales_pnl_and_cost_proportionally():

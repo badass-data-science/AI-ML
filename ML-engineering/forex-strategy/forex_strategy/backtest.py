@@ -1,16 +1,15 @@
 """Cost-aware backtest: turn a model's per-row class predictions into a trade
 decision, and simulate P&L net of spread and (optionally) swap/rollover cost.
 
-Class semantics match forex_ml.data.splitting.TimeSeriesSplitter._compute_outcome:
-class 0 = lowest tercile of column_y, class 1 = middle, class 2 = highest tercile.
-For a DIRECTIONAL target like pd_lead (% price change), that maps naturally onto
-short / no-trade / long. This backtest assumes a directional target -- running it
-against a magnitude-only target (volatility_lead, forex-ML's current default) isn't
-meaningful on its own, since "high volatility" implies no direction. Volatility is
-meant to feed position SIZING on top of a directional decision, not substitute for
-one -- see `position_size_from_predicted_volatility_class` below. Callers should
-check the source run's logged `column_y` param (see forex-ML's README) before
-treating `y_raw` as a directional P&L input.
+Class semantics match forex_ml.data.splitting.TimeSeriesSplitter._label_to_one_hot's
+triple-barrier label mapping: class 0 = stop-loss hit (label -1), class 1 = timed
+out flat (label 0), class 2 = profit-take hit (label +1) -- so highest class = long
+signal, lowest class = short signal, exactly the short/flat/long convention this
+module's `predicted_classes_to_positions` already assumes. Position SIZING is a
+separate concern from the directional call: `position_size_from_realized_volatility`
+below scales size against forex-ML's `realized_volatility` passthrough column (a
+real, already-observed backward-looking average -- see forex-ML's README), not a
+second model's prediction.
 """
 
 from __future__ import annotations
@@ -47,26 +46,29 @@ def predicted_classes_to_positions(pred_proba: np.ndarray, min_confidence: float
     return np.where(confidence >= min_confidence, positions, 0)
 
 
-def position_size_from_predicted_volatility_class(
-    predicted_volatility_class: np.ndarray, size_by_class: tuple[float, float, float] = (1.0, 0.6, 0.3),
+def position_size_from_realized_volatility(
+    realized_volatility: np.ndarray, target_volatility: float, max_size: float = 1.0,
 ) -> np.ndarray:
-    """Scales position size by a volatility model's predicted tercile: full size for
-    a predicted LOW-volatility bar (class 0), progressively smaller for medium
-    (class 1) and high (class 2) -- the standard volatility-targeting idea (size
-    inversely with risk), applied to forex-ML's ordinal 3-class `volatility_lead`
-    prediction rather than a fabricated continuous magnitude the model was never
-    trained to output precisely."""
-    predicted_volatility_class = np.asarray(predicted_volatility_class)
-    if predicted_volatility_class.size and (
-        predicted_volatility_class.min() < 0 or predicted_volatility_class.max() > 2
-    ):
-        raise ValueError("predicted_volatility_class must be in {0, 1, 2}")
-    return np.asarray(size_by_class)[predicted_volatility_class]
+    """Standard inverse-volatility-targeting: size = clip(target_volatility /
+    realized_volatility, 0, max_size). Scales a trade down when recent realized
+    volatility (forex-ML's `realized_volatility` passthrough column -- a fixed
+    12-bar trailing average of per-bar high-low range, real already-observed data,
+    not a prediction) is running above `target_volatility`, and up (capped at
+    `max_size`) when it's running below. A realized_volatility of exactly 0 (e.g. a
+    dead/illiquid stretch) sizes at `max_size` rather than dividing by zero -- there
+    was no recent risk observed, not infinite headroom, but `max_size` is the
+    least-wrong finite answer here."""
+    realized_volatility = np.asarray(realized_volatility, dtype=float)
+    if realized_volatility.size and realized_volatility.min() < 0:
+        raise ValueError("realized_volatility must be non-negative")
+    with np.errstate(divide="ignore"):
+        size = np.where(realized_volatility > 0, target_volatility / realized_volatility, max_size)
+    return np.clip(size, 0.0, max_size)
 
 
 def simulate_trades(
     positions: np.ndarray,
-    pd_lead_pct: np.ndarray,
+    raw_return_pct: np.ndarray,
     spread: np.ndarray,
     price: np.ndarray,
     *,
@@ -78,7 +80,7 @@ def simulate_trades(
 ) -> BacktestResult:
     """Spread is charged as the full round-trip cost -- buying at ask and later
     selling at bid (or the reverse, for a short) costs one full spread-width
-    relative to the mid price `pd_lead_pct` is measured from. The entry bar's
+    relative to the mid price `raw_return_pct` is measured from. The entry bar's
     spread stands in for both legs since the exit bar's spread isn't available here
     (forex-ML computes `spread_close_lead` in Stage 1 but doesn't currently plumb
     it through Splits).
@@ -96,16 +98,19 @@ def simulate_trades(
     `position_size` (default: all ones) scales both P&L and cost proportionally,
     so a 0.3-size position produces 30% of a full-size position's P&L AND 30% of
     its cost, not a discounted cost at full P&L -- see
-    `position_size_from_predicted_volatility_class` for a volatility-gated source.
+    `position_size_from_realized_volatility` for a volatility-gated source.
 
-    `pd_lead_pct` is forex_ml's pd_lead target: 100 * (exit_price - entry_price) /
-    entry_price, i.e. already a percentage -- see this module's docstring for why
-    that's the only target this makes sense against. `spread`/`price` are the raw
-    (non-percentage) price-unit values from Splits.test.
+    `raw_return_pct` is forex-ML's `Splits.test["y_raw"]` / the predictions
+    artifact's `test_y_raw` -- triple-barrier's `raw_return_pct`, the *pre-cost*
+    realized % move at the row's actual exit bar (100 * (exit_price - entry_price) /
+    entry_price). Deliberately not `net_return_pct` (already net of spread/swap),
+    which would double-count cost against the spread/swap this function charges
+    itself. `spread`/`price` are the raw (non-percentage) price-unit values from
+    `Splits.test`.
     """
     n = len(positions)
-    if not (len(pd_lead_pct) == len(spread) == len(price) == n):
-        raise ValueError("positions/pd_lead_pct/spread/price must all be the same length")
+    if not (len(raw_return_pct) == len(spread) == len(price) == n):
+        raise ValueError("positions/raw_return_pct/spread/price must all be the same length")
 
     if position_size is None:
         position_size = np.ones(n)
@@ -138,7 +143,7 @@ def simulate_trades(
 
     is_trade = sized_positions != 0
     abs_size = np.abs(sized_positions)
-    gross_pnl_pct = sized_positions * pd_lead_pct
+    gross_pnl_pct = sized_positions * raw_return_pct
     spread_cost_pct = np.where(is_trade, abs_size * 100.0 * spread / price, 0.0)
     swap_cost_pct = np.where(is_trade, abs_size * swap_cost_pct_per_night * n_rollovers, 0.0)
     cost_pct = spread_cost_pct + swap_cost_pct

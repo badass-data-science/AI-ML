@@ -1,7 +1,8 @@
 """CLI: load a registered forex-ML model's test-set predictions from MLflow, and run
 the cost-aware backtest against them -- optionally with swap/rollover cost, the
-5pm-New-York flatten rule, and volatility-gated position sizing from a second
-(volatility_lead-trained) model for the same pair.
+5pm-New-York flatten rule, and realized-volatility-gated position sizing sourced
+directly from the same model's own predictions (no second model to train/register/
+keep row-aligned).
 
 Run ad-hoc:
     python -m forex_strategy.run_backtest --tracking-uri sqlite:///../forex-ML/mlflow.db \
@@ -13,25 +14,24 @@ from __future__ import annotations
 import argparse
 import tempfile
 
-import numpy as np
 from forex.eda.eda_config.eda_config import granularity_to_seconds_map
 from mlflow.tracking import MlflowClient
 
 from forex_strategy.backtest import (
     BacktestResult,
-    position_size_from_predicted_volatility_class,
+    position_size_from_realized_volatility,
     predicted_classes_to_positions,
     simulate_trades,
 )
 from forex_strategy.model_registry import find_model_version, load_test_predictions
 
 
-def _require_pd_lead(client: MlflowClient, run_id: str) -> None:
+def _require_triple_barrier(client: MlflowClient, run_id: str) -> None:
     column_y = client.get_run(run_id).data.params.get("column_y")
-    if column_y != "pd_lead":
+    if column_y != "triple_barrier":
         raise ValueError(
-            f"Run {run_id} was trained on column_y={column_y!r}, not 'pd_lead' -- "
-            "this backtest assumes a directional target (see forex_strategy.backtest docstring)."
+            f"Run {run_id} was trained on column_y={column_y!r}, not 'triple_barrier' -- "
+            "this backtest assumes triple-barrier labeling (see forex_ml.data.triple_barrier)."
         )
 
 
@@ -44,15 +44,15 @@ def backtest_from_mlflow(
     min_confidence: float = 0.0,
     swap_cost_pct_per_night: float = 0.0,
     flatten_before_rollover: bool = False,
-    use_volatility_sizing: bool = False,
-    volatility_config_signature: str | None = None,
-    size_by_class: tuple[float, float, float] = (1.0, 0.6, 0.3),
+    size_by_realized_volatility: bool = False,
+    target_volatility: float = 0.0005,
+    max_position_size: float = 1.0,
 ) -> BacktestResult:
     client = MlflowClient(tracking_uri=tracking_uri)
     resolved = find_model_version(
-        client, registered_model_name, instrument, granularity, config_signature, column_y="pd_lead",
+        client, registered_model_name, instrument, granularity, config_signature, column_y="triple_barrier",
     )
-    _require_pd_lead(client, resolved.run_id)  # belt-and-suspenders: tag lookup already filtered on it
+    _require_triple_barrier(client, resolved.run_id)  # belt-and-suspenders: tag lookup already filtered on it
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         predictions = load_test_predictions(client, resolved.run_id, tmp_dir)
@@ -62,25 +62,14 @@ def backtest_from_mlflow(
     entry_timestamp = predictions["test_timestamp"]
     exit_timestamp = None
     if swap_cost_pct_per_night != 0.0 or flatten_before_rollover:
-        lookahead = int(client.get_run(resolved.run_id).data.params["lookahead"])
         granularity_seconds = float(granularity_to_seconds_map[granularity])
-        exit_timestamp = entry_timestamp + lookahead * granularity_seconds
+        exit_timestamp = entry_timestamp + predictions["test_exit_bar_offset"] * granularity_seconds
 
     position_size = None
-    if use_volatility_sizing:
-        vol_resolved = find_model_version(
-            client, registered_model_name, instrument, granularity,
-            volatility_config_signature, column_y="volatility_lead",
+    if size_by_realized_volatility:
+        position_size = position_size_from_realized_volatility(
+            predictions["test_realized_volatility"], target_volatility, max_position_size,
         )
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            vol_predictions = load_test_predictions(client, vol_resolved.run_id, tmp_dir)
-        if not np.array_equal(vol_predictions["test_timestamp"], entry_timestamp):
-            raise ValueError(
-                "The pd_lead and volatility_lead models' test sets are not row-aligned by timestamp -- "
-                "they must share the same n_back/lookahead/split configuration to be combined."
-            )
-        predicted_volatility_class = np.argmax(vol_predictions["lstm_pred_proba"], axis=1)
-        position_size = position_size_from_predicted_volatility_class(predicted_volatility_class, size_by_class)
 
     return simulate_trades(
         positions, predictions["test_y_raw"], predictions["test_spread"], predictions["test_price"],
@@ -100,15 +89,16 @@ def main() -> None:
     parser.add_argument("--min-confidence", type=float, default=0.0)
     parser.add_argument("--swap-cost-pct-per-night", type=float, default=0.0)
     parser.add_argument("--flatten-before-rollover", action="store_true")
-    parser.add_argument("--use-volatility-sizing", action="store_true")
-    parser.add_argument("--volatility-config-signature", default=None)
+    parser.add_argument("--size-by-realized-volatility", action="store_true")
+    parser.add_argument("--target-volatility", type=float, default=0.0005)
+    parser.add_argument("--max-position-size", type=float, default=1.0)
     args = parser.parse_args()
 
     result = backtest_from_mlflow(
         args.tracking_uri, args.instrument, args.granularity,
         args.registered_model_name, args.config_signature, args.min_confidence,
         args.swap_cost_pct_per_night, args.flatten_before_rollover,
-        args.use_volatility_sizing, args.volatility_config_signature,
+        args.size_by_realized_volatility, args.target_volatility, args.max_position_size,
     )
     print(f"rows={result.n_rows} trades={result.n_trades} flattened_for_rollover={result.n_flattened_for_rollover}")
     print(f"win_rate={result.win_rate:.3f}")
