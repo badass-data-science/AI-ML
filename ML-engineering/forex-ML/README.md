@@ -523,8 +523,9 @@ Two window types, chosen via `--window`:
   stationarity assumption.
 
 Every fold's boundaries are purge-gap aware, same as the single split: `--purge-bars`
-defaults to `max(feature.n_back, feature.lookahead)` from `params.yaml` (overridable),
-purging that many bars on both sides of each fold's train/val and val/test boundary so
+defaults to `max(feature.n_back, split.max_holding_bars)` from `params.yaml`
+(overridable), purging that many bars on both sides of each fold's train/val and
+val/test boundary so
 no fold's window or label overlaps an adjacent split — see the purge-gap note under
 Configuration above for why.
 
