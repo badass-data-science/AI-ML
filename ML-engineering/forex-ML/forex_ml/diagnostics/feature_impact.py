@@ -89,6 +89,57 @@ def load_target_and_candidates(
     )
 
 
+def load_cross_pair_target_and_candidates(
+    spark: SparkSession,
+    output_dir: str,
+    target_instrument: str,
+    granularity: str,
+    n_back: int,
+    lookahead: int,
+    target_column: str,
+    candidate_pairs: list[tuple[str, list[str]]],
+) -> pd.DataFrame:
+    """Like load_target_and_candidates, but candidates are drawn from OTHER
+    instruments at the same granularity/n_back/lookahead -- e.g. does GBP/USD's
+    return help predict EUR/USD's volatility_lead? No new ingestion needed: every
+    major pair already flows through the same Stage 1 pipeline, each under its own
+    (instrument, granularity, n_back, lookahead) key.
+
+    `candidate_pairs` is a list of (instrument, columns). Candidate columns from a
+    DIFFERENT instrument than the target are renamed
+    "{instrument_with_underscores}__{column}" before joining, since every pair's
+    Stage 1 output uses the same column names (e.g. "return" exists for every
+    instrument) and would otherwise collide. Joined to the target on unix_epoch_s
+    via an inner join -- different pairs can have slightly different available
+    timestamps (e.g. differing forward-fill history), so this keeps only
+    timestamps common to the target and every candidate pair, rather than assuming
+    perfect alignment.
+    """
+    target_key = pair_key(target_instrument, granularity, n_back, lookahead)
+    merged = cast(
+        pd.DataFrame,
+        spark.read.parquet(str(non_time_series_parquet_path(output_dir, target_key)))
+        .orderBy("unix_epoch_s")
+        .select("unix_epoch_s", target_column)
+        .toPandas(),
+    )
+
+    for candidate_instrument, columns in candidate_pairs:
+        candidate_key = pair_key(candidate_instrument, granularity, n_back, lookahead)
+        candidate_df = cast(
+            pd.DataFrame,
+            spark.read.parquet(str(non_time_series_parquet_path(output_dir, candidate_key)))
+            .orderBy("unix_epoch_s")
+            .select("unix_epoch_s", *columns)
+            .toPandas(),
+        )
+        prefix = candidate_instrument.replace("/", "_")
+        candidate_df = candidate_df.rename(columns={c: f"{prefix}__{c}" for c in columns})
+        merged = merged.merge(candidate_df, on="unix_epoch_s", how="inner")
+
+    return merged.sort_values("unix_epoch_s").reset_index(drop=True)
+
+
 def cross_correlation_report(
     df: pd.DataFrame,
     target_column: str,
@@ -322,6 +373,44 @@ def analyze_feature_impact(
     }
 
 
+def analyze_cross_pair_feature_impact(
+    spark: SparkSession,
+    output_dir: str,
+    target_instrument: str,
+    granularity: str,
+    n_back: int,
+    lookahead: int,
+    target_column: str,
+    candidate_pairs: list[tuple[str, list[str]]],
+    ccf_max_lag: int = 50,
+    granger_lag: int = 10,
+    var_lag_order: int = 10,
+    var_horizon: int = 20,
+    lasso_max_lag: int = 10,
+) -> dict:
+    """Runs all four techniques (see module docstring) against a target
+    instrument's real Stage-1 output, with candidates drawn from OTHER
+    instruments' Stage-1 output -- otherwise identical to analyze_feature_impact,
+    since once the cross-pair candidates are loaded and renamed (see
+    load_cross_pair_target_and_candidates), every downstream report function is
+    candidate-source-agnostic."""
+    df = load_cross_pair_target_and_candidates(
+        spark, output_dir, target_instrument, granularity, n_back, lookahead, target_column, candidate_pairs,
+    )
+    candidate_columns = [
+        f"{instrument.replace('/', '_')}__{column}"
+        for instrument, columns in candidate_pairs
+        for column in columns
+    ]
+    return {
+        "n_observations": len(df),
+        "cross_correlation": cross_correlation_report(df, target_column, candidate_columns, ccf_max_lag),
+        "granger_causality": granger_causality_report(df, target_column, candidate_columns, granger_lag),
+        "var_fevd": var_fevd_report(df, target_column, candidate_columns, var_lag_order, var_horizon),
+        "lasso": lasso_importance_report(df, target_column, candidate_columns, lasso_max_lag),
+    }
+
+
 def _print_report(instrument: str, granularity: str, target_column: str, result: dict) -> None:
     print(f"{instrument} {granularity} — feature impact on {target_column}")
     print(f"  observations: {result['n_observations']}\n")
@@ -356,6 +445,18 @@ def _print_report(instrument: str, granularity: str, target_column: str, result:
         print(f"    {column:28s} best_lag={r['best_lag']:3d}  coef={r['coefficient_at_best_lag']:+.4f}  {status}")
 
 
+def _parse_cross_pair_candidates(spec: str) -> list[tuple[str, list[str]]]:
+    """Parses "GBP/USD:return,diff_spread_close;USD/JPY:volatility" into
+    [("GBP/USD", ["return", "diff_spread_close"]), ("USD/JPY", ["volatility"])] --
+    one semicolon-separated group per candidate instrument, columns within a group
+    comma-separated."""
+    pairs = []
+    for group in spec.split(";"):
+        instrument, columns = group.split(":")
+        pairs.append((instrument.strip(), [c.strip() for c in columns.split(",")]))
+    return pairs
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Quick linear screening for which columns most impact the prediction target -- "
@@ -366,7 +467,15 @@ def main() -> None:
     parser.add_argument(
         "--candidates", default=None,
         help="Comma-separated column names to evaluate (default: params.yaml's split.columns_x). "
-             "Can be ANY column Stage 1 produces, including ones not yet in columns_x.",
+             "Can be ANY column Stage 1 produces, including ones not yet in columns_x. "
+             "Ignored if --cross-pair-candidates is given.",
+    )
+    parser.add_argument(
+        "--cross-pair-candidates", default=None,
+        help="Evaluate candidates from OTHER instruments instead of --instrument's own columns, e.g. "
+             "'GBP/USD:return,diff_spread_close;USD/JPY:volatility' -- one semicolon-separated group per "
+             "candidate instrument, columns within a group comma-separated. No new ingestion needed: every "
+             "major pair already flows through Stage 1 under its own (instrument, granularity) key.",
     )
     parser.add_argument("--ccf-max-lag", type=int, default=50)
     parser.add_argument("--granger-lag", type=int, default=10, help="Shared lag for all pairwise Granger tests")
@@ -382,16 +491,24 @@ def main() -> None:
     args = parser.parse_args()
 
     params = load_params(args.params) if args.params else load_params()
-    candidate_columns = args.candidates.split(",") if args.candidates else list(params.split.columns_x)
-
     spark = build_spark_session("forex-ml-feature-impact-diagnostic", memory=args.spark_memory)
 
-    result = analyze_feature_impact(
-        spark, params.feature.output_dir, args.instrument, args.granularity,
-        params.feature.n_back, params.feature.lookahead, params.split.column_y, candidate_columns,
-        ccf_max_lag=args.ccf_max_lag, granger_lag=args.granger_lag,
-        var_lag_order=args.var_lag_order, var_horizon=args.var_horizon, lasso_max_lag=args.lasso_max_lag,
-    )
+    if args.cross_pair_candidates:
+        candidate_pairs = _parse_cross_pair_candidates(args.cross_pair_candidates)
+        result = analyze_cross_pair_feature_impact(
+            spark, params.feature.output_dir, args.instrument, args.granularity,
+            params.feature.n_back, params.feature.lookahead, params.split.column_y, candidate_pairs,
+            ccf_max_lag=args.ccf_max_lag, granger_lag=args.granger_lag,
+            var_lag_order=args.var_lag_order, var_horizon=args.var_horizon, lasso_max_lag=args.lasso_max_lag,
+        )
+    else:
+        candidate_columns = args.candidates.split(",") if args.candidates else list(params.split.columns_x)
+        result = analyze_feature_impact(
+            spark, params.feature.output_dir, args.instrument, args.granularity,
+            params.feature.n_back, params.feature.lookahead, params.split.column_y, candidate_columns,
+            ccf_max_lag=args.ccf_max_lag, granger_lag=args.granger_lag,
+            var_lag_order=args.var_lag_order, var_horizon=args.var_horizon, lasso_max_lag=args.lasso_max_lag,
+        )
     _print_report(args.instrument, args.granularity, params.split.column_y, result)
 
 

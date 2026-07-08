@@ -414,6 +414,28 @@ explicitly — a candidate showing a large FEVD share but "not significant" in t
 causality test is a sign to check this warning, not a sign the candidate doesn't
 matter.
 
+**Cross-pair candidates**: every technique above also works with candidates drawn
+from a DIFFERENT instrument than the target — e.g. does GBP/USD's `return` help
+predict EUR/USD's `volatility_lead`? No new ingestion needed, since all 7 major
+pairs already flow through the same Stage 1 pipeline, each under its own
+`(instrument, granularity)` key:
+
+```bash
+uv run python -m forex_ml.diagnostics.feature_impact --instrument EUR/USD --granularity H1 \
+    --cross-pair-candidates "GBP/USD:return,diff_spread_close;USD/JPY:volatility"
+```
+
+`--cross-pair-candidates` is one semicolon-separated group per candidate
+instrument, columns within a group comma-separated (parsed by
+`_parse_cross_pair_candidates`); it takes over from `--candidates` when given.
+`load_cross_pair_target_and_candidates` renames each candidate column to
+`{instrument}__{column}` before joining on `unix_epoch_s` (an inner join — pairs
+can have slightly different available timestamps, e.g. differing forward-fill
+history), since every pair's Stage 1 output uses the same column names and would
+otherwise collide. Once loaded and renamed, every report function is
+candidate-source-agnostic — `analyze_cross_pair_feature_impact` is otherwise
+identical to the single-pair `analyze_feature_impact`.
+
 ```bash
 uv run python -m forex_ml.evaluation.multiple_comparisons --experiment forex-lstm
 ```

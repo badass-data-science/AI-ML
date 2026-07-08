@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import datetime
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from forex_ml.config import FeatureParams
 from forex_ml.diagnostics.feature_impact import (
+    _parse_cross_pair_candidates,
+    analyze_cross_pair_feature_impact,
     analyze_feature_impact,
     cross_correlation_report,
     granger_causality_report,
     lasso_importance_report,
+    load_cross_pair_target_and_candidates,
     load_target_and_candidates,
     var_fevd_report,
 )
@@ -150,3 +155,105 @@ def test_analyze_feature_impact_runs_against_real_stage1_output(spark, synthetic
     assert set(result["granger_causality"].keys()) == {"volatility", "return", "day_sin"}
     assert set(result["var_fevd"]["fevd_fraction_of_target_variance"].keys()) == {"volatility", "return", "day_sin"}
     assert set(result["lasso"].keys()) == {"volatility", "return", "day_sin", "_alpha_selected"}
+
+
+def test_parse_cross_pair_candidates_handles_multiple_instruments_and_columns():
+    parsed = _parse_cross_pair_candidates("GBP/USD:return,diff_spread_close;USD/JPY:volatility")
+    assert parsed == [
+        ("GBP/USD", ["return", "diff_spread_close"]),
+        ("USD/JPY", ["volatility"]),
+    ]
+
+
+def test_parse_cross_pair_candidates_handles_a_single_instrument_and_column():
+    assert _parse_cross_pair_candidates("GBP/USD:return") == [("GBP/USD", ["return"])]
+
+
+def _make_candles_for(instrument: str, seed: int) -> pd.DataFrame:
+    """Same shape as conftest.synthetic_candles, but for an arbitrary instrument/
+    seed, and on the SAME timestamp grid -- needed so two different "pairs"'
+    Stage-1 output actually has overlapping unix_epoch_s values to inner-join on."""
+    n = 300
+    rng = np.random.default_rng(seed)
+    start = int(datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc).timestamp())
+    timestamps = start + np.arange(n) * 3600
+
+    base_price = 1.10 + np.cumsum(rng.normal(0, 0.0005, size=n))
+    mid_open = base_price
+    mid_close = base_price + rng.normal(0, 0.0002, size=n)
+    mid_high = np.maximum(mid_open, mid_close) + np.abs(rng.normal(0, 0.0002, size=n))
+    mid_low = np.minimum(mid_open, mid_close) - np.abs(rng.normal(0, 0.0002, size=n))
+    spread_close = np.abs(rng.normal(0.0001, 0.00002, size=n))
+    volume = rng.integers(100, 1000, size=n).astype(float)
+
+    return pd.DataFrame({
+        "instrument": instrument,
+        "granularity": "H1",
+        "unix_epoch_s": timestamps,
+        "mid_open": mid_open,
+        "mid_high": mid_high,
+        "mid_low": mid_low,
+        "mid_close": mid_close,
+        "spread_close": spread_close,
+        "volume": volume,
+    })
+
+
+def test_load_cross_pair_target_and_candidates_joins_two_real_pairs_and_renames_columns(spark, tmp_path):
+    params = FeatureParams(
+        instruments=["EUR/USD", "GBP/USD"],
+        granularities=["H1"],
+        n_back=10,
+        lookahead=2,
+        ma_lookback_list=[3, 5],
+        columns_base=["mid_open", "mid_high", "mid_low", "mid_close", "spread_close", "volume"],
+        ma_columns_list=["volatility", "return", "diff_spread_close", "diff_volume"],
+        training_and_testing=True,
+        min_training_timestamp="2020-01-01T00:00:00",
+        output_dir=str(tmp_path),
+    )
+    engineer_and_save_task(spark, _make_candles_for("EUR/USD", seed=42), "EUR/USD", "H1", params)
+    engineer_and_save_task(spark, _make_candles_for("GBP/USD", seed=7), "GBP/USD", "H1", params)
+
+    df = load_cross_pair_target_and_candidates(
+        spark, str(tmp_path), "EUR/USD", "H1", n_back=10, lookahead=2,
+        target_column="volatility_lead",
+        candidate_pairs=[("GBP/USD", ["return", "diff_spread_close"])],
+    )
+
+    assert len(df) > 0
+    assert "volatility_lead" in df.columns
+    assert "GBP_USD__return" in df.columns
+    assert "GBP_USD__diff_spread_close" in df.columns
+    assert "return" not in df.columns  # not renamed for the TARGET pair, but it wasn't requested at all
+
+
+def test_analyze_cross_pair_feature_impact_runs_against_two_real_pairs(spark, tmp_path):
+    params = FeatureParams(
+        instruments=["EUR/USD", "GBP/USD"],
+        granularities=["H1"],
+        n_back=10,
+        lookahead=2,
+        ma_lookback_list=[3, 5],
+        columns_base=["mid_open", "mid_high", "mid_low", "mid_close", "spread_close", "volume"],
+        ma_columns_list=["volatility", "return", "diff_spread_close", "diff_volume"],
+        training_and_testing=True,
+        min_training_timestamp="2020-01-01T00:00:00",
+        output_dir=str(tmp_path),
+    )
+    engineer_and_save_task(spark, _make_candles_for("EUR/USD", seed=42), "EUR/USD", "H1", params)
+    engineer_and_save_task(spark, _make_candles_for("GBP/USD", seed=7), "GBP/USD", "H1", params)
+
+    result = analyze_cross_pair_feature_impact(
+        spark, str(tmp_path), "EUR/USD", "H1", n_back=10, lookahead=2,
+        target_column="volatility_lead",
+        candidate_pairs=[("GBP/USD", ["return", "volatility"])],
+        ccf_max_lag=10, granger_lag=3, var_lag_order=3, var_horizon=5, lasso_max_lag=3,
+    )
+
+    expected_columns = {"GBP_USD__return", "GBP_USD__volatility"}
+    assert result["n_observations"] > 0
+    assert set(result["cross_correlation"].keys()) == expected_columns
+    assert set(result["granger_causality"].keys()) == expected_columns
+    assert set(result["var_fevd"]["fevd_fraction_of_target_variance"].keys()) == expected_columns
+    assert set(result["lasso"].keys()) == expected_columns | {"_alpha_selected"}

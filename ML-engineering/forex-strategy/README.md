@@ -93,8 +93,8 @@ actually wants).
 
 ## Roadmap
 
-This project is being built incrementally, one phase per work session. Status as of this
-writing:
+This project was built incrementally, one phase per work session. All 9 planned phases
+are now done:
 
 1. ~~Scaffold `forex-strategy`~~ — **done**. Package skeleton only, no backtest logic yet.
 2. ~~forex-ML: backtest-enabling plumbing~~ — **done**. Test-set timestamp/price/spread/
@@ -115,10 +115,23 @@ writing:
 6. ~~Extend the backtest~~ — **done**. Swap cost, the 5pm-NY flatten rule, and
    volatility-gated position sizing (a second registered model, combined by timestamp
    alignment) — see "Running the backtest" above.
-7. **forex-etl: economic calendar ingestion.**
-8. **forex-etl: OANDA positioning/order-book ingestion.**
-9. **forex-ML: cross-pair feature-impact reuse** — no new ingestion required, all 7 major
-   pairs are already collected.
+7. ~~forex-etl: economic calendar ingestion~~ — **done**. `EconomicCalendarETL`
+   (Finnhub, not Oanda — a separate provider/credential), a new
+   `economic-calendar-event` InfluxDB measurement.
+8. ~~forex-etl: OANDA positioning/order-book ingestion~~ — **done**. `PositioningETL`
+   (back to Oanda's own API/token), a new `positioning-bucket` measurement — raw
+   per-price-bucket data, not a collapsed "overall % long/short" stat Oanda's exact
+   normalization wasn't confirmable here.
+9. ~~forex-ML: cross-pair feature-impact reuse~~ — **done**.
+   `analyze_cross_pair_feature_impact`/`--cross-pair-candidates` — every existing
+   screening technique now also works with candidates drawn from a different
+   instrument than the target, no new ingestion required.
+
+None of forex-etl's three newest sources (swap rates, economic calendar, positioning)
+are consumed by this package's backtest yet beyond the swap-cost/flatten-rule wiring
+already in place — the calendar and positioning data are ingested and available for
+future work (e.g. a calendar-aware volatility overlay, a positioning-based contrarian
+signal), but nothing here reads them yet.
 
 ## Tests
 
