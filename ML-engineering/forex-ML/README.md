@@ -498,6 +498,47 @@ here:
   registry, deployment selection, and is meaningfully heavier compute on a single
   local GPU than a one-off diagnostic run.
 
+## Cost-aware labeling (triple barrier)
+
+`forex_ml/data/triple_barrier.py` implements Lopez de Prado's **triple-barrier
+method**: label each candidate entry by whichever of three barriers is hit first —
+an upper (profit-take) barrier, a lower (stop-loss) barrier, or a vertical
+(max-holding-period) barrier — rather than a fixed-horizon percent change like
+`pd_lead`. This is an event-driven notion of "the label" that matches how a real
+trade actually closes (hits its target, hits its stop, or times out), instead of
+always measuring the move over a fixed number of bars regardless of what happened
+along the way.
+
+It's **cost-aware**: `profit_take_pct`/`stop_loss_pct` are thresholds on the *net*
+return, not the raw price move. Spread is charged once as a full round-trip cost
+(same convention `forex_strategy.backtest` uses); swap/rollover is charged once per
+5pm New York rollover boundary *actually crossed* between entry and exit — computed
+DST-aware in local `America/New_York` time (`_count_rollovers_crossed`), not the
+fixed-UTC approximation the trading-session features above use, since an hour's
+error here is the difference between being charged a night's swap or not, not just
+a soft diurnal-pattern approximation. An intraday (H1/M15) hold usually crosses zero
+rollovers; multi-day holds accumulate one charge per night actually held through,
+not one per bar.
+
+```python
+from forex_ml.data.triple_barrier import triple_barrier_labels_from_frame
+
+labeled = triple_barrier_labels_from_frame(
+    df,  # Stage-1 df_non_time_series, sorted by unix_epoch_s for one pair
+    profit_take_pct=0.5, stop_loss_pct=0.3, max_holding_bars=8,
+    swap_cost_pct_per_night=0.02,  # e.g. the negative of a SwapRateRecord long_rate, if negative
+)
+```
+
+This is a **standalone labeling/research utility only** — it is not wired into
+Stage 1's `add_targets`/`column_y`, and `params.yaml`'s `split.column_y` cannot
+select it. Swapping the pipeline's production target for triple-barrier labels is a
+bigger, separate decision (retraining, re-validating baselines, choosing
+profit-take/stop-loss/max-holding hyperparameters) than building and testing the
+labeling method itself. Long-side only for now: the upper barrier is a profit-take
+and the lower a stop-loss *for a long position* — a short-side/bidirectional
+variant would need its own sign convention and isn't built here.
+
 ## Tests
 
 ```bash
@@ -513,9 +554,9 @@ test evaluation → MLflow run assertion. That last test is what would have caug
 original bug where the precomputed validation set was silently discarded in favor of
 `validation_split=`. It also covers every evaluation/diagnostics module — baselines,
 class balance, ACF/PACF, ADF/KPSS stationarity, multiple-comparisons BH-FDR
-correction, and rolling CV — each with at least one real end-to-end test (real
-Spark-engineered Stage-1 output and/or a real local MLflow store), not just
-unit tests against hand-built arrays.
+correction, rolling CV, and triple-barrier labeling — each with at least one real
+end-to-end test (real Spark-engineered Stage-1 output and/or a real local MLflow
+store), not just unit tests against hand-built arrays.
 
 `tests/test_influx_integration.py` is a second tier: it spins up a real InfluxDB 2.x
 container via Docker, seeds it with synthetic "forward-filled candlestick" rows using
