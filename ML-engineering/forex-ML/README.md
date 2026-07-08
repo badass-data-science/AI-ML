@@ -265,10 +265,11 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 
 Every pair registers under the same shared `train.mlflow_experiment_name` — the
 Model Registry has no per-pair identity of its own. Every registered model version is
-tagged at registration time with `instrument`, `granularity`, and `config_signature`
+tagged at registration time with `instrument`, `granularity`, `config_signature`
 (the same hash `forex_ml/evaluation/multiple_comparisons.py` uses to group runs by
-configuration), so the right version can be found via `MlflowClient.search_model_versions`
-without grepping the source run's logged params:
+configuration), and `column_y` (which target this version was trained on), so the
+right version can be found via `MlflowClient.search_model_versions` without grepping
+the source run's logged params:
 
 ```python
 from mlflow.tracking import MlflowClient
@@ -276,8 +277,17 @@ from mlflow.tracking import MlflowClient
 client = MlflowClient(tracking_uri="sqlite:///mlflow.db")
 versions = client.search_model_versions(
     "name = 'forex-lstm' and tags.instrument = 'EUR/USD' and tags.granularity = 'H1'"
+    " and tags.column_y = 'pd_lead'"
 )
 ```
+
+The `column_y` tag matters beyond convenience: a consumer that needs two DIFFERENT
+target models for the same pair (e.g. forex-strategy pairing a directional `pd_lead`
+model with a `volatility_lead` model for position sizing) can't tell them apart from
+`instrument`/`granularity` alone, since both share the same pair — `config_signature`
+differs between them (different `column_y` is itself part of what gets hashed), but
+filtering on `column_y` directly is far more explicit than relying on that
+side-effect.
 
 ### Backtesting support
 

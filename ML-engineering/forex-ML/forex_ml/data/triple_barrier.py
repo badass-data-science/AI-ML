@@ -42,7 +42,7 @@ _NY_TZ = ZoneInfo("America/New_York")
 _ROLLOVER_HOUR_NY = 17
 
 
-def _count_rollovers_crossed(entry_ts: float, exit_ts: float) -> int:
+def count_rollovers_crossed(entry_ts: float, exit_ts: float) -> int:
     """Number of 5pm America/New_York rollover boundaries strictly after entry_ts
     and at-or-before exit_ts -- i.e. how many nights this holding period would
     actually be charged swap for. DST-aware (unlike the rest of this pipeline's
@@ -110,7 +110,7 @@ def triple_barrier_labels(
         for j in range(1, max_holding_bars + 1):
             exit_ts = timestamp[i + j]
             raw_return_pct = 100.0 * (price[i + j] - entry_price) / entry_price
-            swap_cost_pct = swap_cost_pct_per_night * _count_rollovers_crossed(entry_ts, exit_ts)
+            swap_cost_pct = swap_cost_pct_per_night * count_rollovers_crossed(entry_ts, exit_ts)
             net = raw_return_pct - entry_cost_pct - swap_cost_pct
 
             if net >= profit_take_pct:
@@ -125,7 +125,7 @@ def triple_barrier_labels(
         if not hit:
             j = max_holding_bars
             raw_return_pct = 100.0 * (price[i + j] - entry_price) / entry_price
-            swap_cost_pct = swap_cost_pct_per_night * _count_rollovers_crossed(entry_ts, timestamp[i + j])
+            swap_cost_pct = swap_cost_pct_per_night * count_rollovers_crossed(entry_ts, timestamp[i + j])
             net_return_pct[i] = raw_return_pct - entry_cost_pct - swap_cost_pct
 
     return TripleBarrierLabels(label=label, exit_bar_offset=exit_bar_offset, net_return_pct=net_return_pct)

@@ -96,6 +96,7 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
     assert versions[0].tags["instrument"] == "EUR/USD"
     assert versions[0].tags["granularity"] == "H1"
     assert versions[0].tags["config_signature"]
+    assert versions[0].tags["column_y"] == "pd_lead"
 
     artifact_dir = tmp_path / "downloaded_artifacts"
     predictions_path = next(

@@ -212,12 +212,20 @@ def train_and_evaluate(
             # (instrument, granularity, config)" directly via MlflowClient, instead of
             # grepping every version's source run params -- the registry itself has
             # no per-pair identity otherwise (every pair registers under the same
-            # shared `params.mlflow_experiment_name`).
+            # shared `params.mlflow_experiment_name`). column_y is also tagged
+            # (not just logged as a run param) so a consumer needing "the pd_lead
+            # model" vs. "the volatility_lead model" for the SAME pair -- e.g.
+            # forex-strategy pairing a directional model with a volatility model for
+            # position sizing -- can filter on it directly rather than fetching every
+            # candidate version's run just to check.
             config_sig = config_signature_from_params(logged_params)
             mlflow.register_model(
                 model_uri=f"runs:/{run.info.run_id}/model",
                 name=params.mlflow_experiment_name,
-                tags={"instrument": instrument, "granularity": granularity, "config_signature": config_sig},
+                tags={
+                    "instrument": instrument, "granularity": granularity,
+                    "config_signature": config_sig, "column_y": column_y,
+                },
             )
 
         history_path = model_dir / f"{run_uid}_history.json"

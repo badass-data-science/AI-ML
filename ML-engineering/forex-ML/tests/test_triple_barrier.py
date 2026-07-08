@@ -9,7 +9,7 @@ import pytest
 
 from forex_ml.config import FeatureParams
 from forex_ml.data.triple_barrier import (
-    _count_rollovers_crossed,
+    count_rollovers_crossed,
     triple_barrier_labels,
     triple_barrier_labels_from_frame,
 )
@@ -25,22 +25,22 @@ def _ts(*args) -> float:
 
 class TestCountRolloversCrossed:
     def test_same_day_before_5pm_is_zero(self):
-        assert _count_rollovers_crossed(_ts(2024, 1, 10, 12, 0), _ts(2024, 1, 10, 16, 0)) == 0
+        assert count_rollovers_crossed(_ts(2024, 1, 10, 12, 0), _ts(2024, 1, 10, 16, 0)) == 0
 
     def test_spanning_5pm_is_one(self):
-        assert _count_rollovers_crossed(_ts(2024, 1, 10, 12, 0), _ts(2024, 1, 10, 18, 0)) == 1
+        assert count_rollovers_crossed(_ts(2024, 1, 10, 12, 0), _ts(2024, 1, 10, 18, 0)) == 1
 
     def test_exactly_at_5pm_counts_as_crossed(self):
-        assert _count_rollovers_crossed(_ts(2024, 1, 10, 12, 0), _ts(2024, 1, 10, 17, 0)) == 1
+        assert count_rollovers_crossed(_ts(2024, 1, 10, 12, 0), _ts(2024, 1, 10, 17, 0)) == 1
 
     def test_spanning_two_nights_is_two(self):
-        assert _count_rollovers_crossed(_ts(2024, 1, 10, 12, 0), _ts(2024, 1, 12, 12, 0)) == 2
+        assert count_rollovers_crossed(_ts(2024, 1, 10, 12, 0), _ts(2024, 1, 12, 12, 0)) == 2
 
     def test_dst_spring_forward_still_counts_one_rollover_per_calendar_night(self):
         # 2024-03-10 is when US DST begins -- still exactly one 5pm boundary per
         # night regardless of the clock jump, since the rollover is defined in
         # local NY wall-clock time, not a fixed UTC offset.
-        assert _count_rollovers_crossed(_ts(2024, 3, 9, 12, 0), _ts(2024, 3, 10, 20, 0)) == 2
+        assert count_rollovers_crossed(_ts(2024, 3, 9, 12, 0), _ts(2024, 3, 10, 20, 0)) == 2
 
 
 def test_triple_barrier_labels_hits_profit_take():
