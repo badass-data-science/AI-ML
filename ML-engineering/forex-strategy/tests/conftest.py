@@ -73,3 +73,24 @@ def trained_volatility_lead_model(tmp_path):
     splits = _make_splits(seed=1)
     train_and_evaluate(splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="volatility_lead")
     return {"tracking_uri": params.mlflow_tracking_uri, "splits": splits}
+
+
+@pytest.fixture
+def trained_pd_lead_and_volatility_models(tmp_path):
+    """Trains and registers BOTH a pd_lead and a volatility_lead model for the same
+    pair into the SAME scratch MLflow store -- for exercising the volatility-gated
+    position-sizing path in run_backtest.py, which needs to look up and combine two
+    distinct registered versions. _make_splits' test["timestamp"] doesn't depend on
+    `seed`, so both models' test sets are already row-aligned by timestamp, exactly
+    as the real pipeline guarantees when both are trained with the same
+    n_back/lookahead/split configuration."""
+    params = _train_params(tmp_path, "forex-lstm")
+    pd_lead_splits = _make_splits(seed=0)
+    volatility_splits = _make_splits(seed=1)
+    train_and_evaluate(
+        pd_lead_splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="pd_lead",
+    )
+    train_and_evaluate(
+        volatility_splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="volatility_lead",
+    )
+    return {"tracking_uri": params.mlflow_tracking_uri, "pd_lead_splits": pd_lead_splits}

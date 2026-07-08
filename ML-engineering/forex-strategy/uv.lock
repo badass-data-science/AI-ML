@@ -1131,6 +1131,7 @@ name = "forex-strategy"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "forex-etl" },
     { name = "forex-ml-training" },
     { name = "keras" },
     { name = "mlflow" },
@@ -1152,6 +1153,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "forex-etl", editable = "../../../Data-Science/Data-Engineering/ETL" },
     { name = "forex-ml-training", editable = "../forex-ML" },
     { name = "keras", specifier = ">=3.0" },
     { name = "mlflow", specifier = ">=2.14" },

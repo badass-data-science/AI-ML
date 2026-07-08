@@ -12,6 +12,7 @@ dependencies = [
     "tensorflow[and-cuda]>=2.16",
     "keras>=3.0",
     "forex-ml-training",
+    "forex-etl",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +25,7 @@ dev = [
 
 [tool.uv.sources]
 forex-ml-training = { path = "../forex-ML", editable = true }
+forex-etl = { path = "../../../Data-Science/Data-Engineering/ETL", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

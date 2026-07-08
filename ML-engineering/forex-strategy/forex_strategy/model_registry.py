@@ -24,6 +24,7 @@ class ResolvedModel:
     instrument: str
     granularity: str
     config_signature: str
+    column_y: str
 
 
 def find_model_version(
@@ -32,10 +33,17 @@ def find_model_version(
     instrument: str,
     granularity: str,
     config_signature: str | None = None,
+    column_y: str | None = None,
 ) -> ResolvedModel:
     """Most recently registered version tagged for this (instrument, granularity
-    [, config_signature]). Raises ValueError if none match -- there's no sensible
-    fallback (e.g. "just pick any version") for a caller asking for a specific pair.
+    [, config_signature] [, column_y]). Raises ValueError if none match -- there's
+    no sensible fallback (e.g. "just pick any version") for a caller asking for a
+    specific pair.
+
+    `column_y` matters beyond convenience: two DIFFERENT target models can share
+    the same (instrument, granularity) -- e.g. a directional `pd_lead` model and a
+    `volatility_lead` model for the same pair, needed together for volatility-gated
+    position sizing (see backtest.py) -- and aren't distinguishable without it.
     """
     filter_parts = [
         f"name = '{registered_model_name}'",
@@ -44,10 +52,15 @@ def find_model_version(
     ]
     if config_signature is not None:
         filter_parts.append(f"tags.config_signature = '{config_signature}'")
+    if column_y is not None:
+        filter_parts.append(f"tags.column_y = '{column_y}'")
 
     versions = client.search_model_versions(" and ".join(filter_parts))
     if not versions:
-        suffix = f" (config_signature={config_signature})" if config_signature else ""
+        suffix = "".join([
+            f" (config_signature={config_signature})" if config_signature else "",
+            f" (column_y={column_y})" if column_y else "",
+        ])
         raise ValueError(
             f"No registered version of {registered_model_name!r} tagged for {instrument} {granularity}{suffix}"
         )
@@ -60,6 +73,7 @@ def find_model_version(
         instrument=latest.tags.get("instrument", instrument),
         granularity=latest.tags.get("granularity", granularity),
         config_signature=latest.tags.get("config_signature", ""),
+        column_y=latest.tags.get("column_y", ""),
     )
 
 
