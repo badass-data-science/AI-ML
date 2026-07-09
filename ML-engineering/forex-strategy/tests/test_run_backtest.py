@@ -24,7 +24,8 @@ def test_backtest_from_mlflow_rejects_pre_migration_pd_lead_models(tmp_path):
     params = _train_params(tmp_path, "forex-lstm")
     train_and_evaluate(
         _make_splits(seed=0), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="pd_lead",
-        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3, swap_cost_pct_per_night=0.0,
+        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3,
+        long_swap_cost_pct_per_night=0.0, short_swap_cost_pct_per_night=0.0,
     )
     with pytest.raises(ValueError, match="No registered version"):
         backtest_from_mlflow(params.mlflow_tracking_uri, "EUR/USD", "H1")
@@ -45,11 +46,13 @@ def test_backtest_from_mlflow_finds_the_triple_barrier_version_even_when_a_later
     params = _train_params(tmp_path, "forex-lstm")
     train_and_evaluate(
         _make_splits(seed=0), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="triple_barrier",
-        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3, swap_cost_pct_per_night=0.0,
+        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3,
+        long_swap_cost_pct_per_night=0.0, short_swap_cost_pct_per_night=0.0,
     )
     train_and_evaluate(
         _make_splits(seed=1), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="pd_lead",
-        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3, swap_cost_pct_per_night=0.0,
+        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3,
+        long_swap_cost_pct_per_night=0.0, short_swap_cost_pct_per_night=0.0,
     )
 
     result = backtest_from_mlflow(params.mlflow_tracking_uri, "EUR/USD", "H1")

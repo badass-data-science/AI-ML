@@ -17,11 +17,38 @@ since that's how OANDA actually charges it -- an intraday (H1/M15) hold crosses
 zero rollovers most of the time, and multi-day holds accumulate one charge per
 night, not one per bar.
 
-Long-side labeling only: the upper barrier is a profit-take and the lower a
-stop-loss FOR A LONG position. `swap_cost_pct_per_night` should be supplied by
-the caller as whatever a long position actually gets charged (e.g. the negative
-of OANDA's `long_rate` financing rate from forex-etl's SwapRateRecord, if
-`long_rate` is negative -- a positive `long_rate` is a credit, not a cost).
+Bidirectional: two independent first-passage "races" are run per entry row, one
+assuming a long position and one assuming a short, each against its own
+swap-cost input (`long_swap_cost_pct_per_night`/`short_swap_cost_pct_per_night`
+-- see forex_ml.data.swap_rates.resolve_swap_cost_pct_per_night, which already
+resolves both sides from OANDA's live financing rates). Long's race is exactly
+the original algorithm; short's race mirrors it with the position's own return
+sign-flipped (`-raw_return_pct`), since a short profits when price falls. The
+two races are NOT mirror images of each other once cost is included: long's
+stop-loss fires as soon as a price drop breaches `-stop_loss_pct` net of cost
+(cost adds to the loss, so a smaller drop triggers it), while a short's
+profit-take requires the drop to clear `profit_take_pct` net of the short's OWN
+cost (cost eats into the gain, so it takes a larger drop to be genuinely
+profitable). Treating "long's stop-loss fired" as "short signal" -- the
+original, pre-bidirectional design -- systematically overstated how easy it is
+for a short to win; that's the bug this design fixes.
+
+Merge rule: if long's race hits its profit-take (and short's doesn't, or hits
+later) -> label +1. If short's race hits its profit-take (and long's doesn't,
+or hits later) -> label -1. If neither race's profit-take fires (either side
+timed out or hit its own stop-loss) -> label 0 (flat) -- expect this class to
+grow relative to the original design, since a "short" label now requires
+independently confirmed short profitability, not just "long lost." Ties
+(both races' profit-takes firing at the exact same bar) are resolved with an
+explicit rule (long wins) rather than assumed to be unreachable: the algebra
+(`long_net + short_net = -2*entry_cost_pct - (long_swap + short_swap)`) shows a
+same-bar double-fire is possible if entry_cost_pct goes negative or swap rates
+are large enough credits, so `spread` is validated non-negative below to keep
+entry_cost_pct itself non-negative, and the tie-break is real code, not an
+unenforced invariant. For flat rows, the reported exit_bar_offset/net_return_pct
+reference whichever race resolved first (tie -> long) -- the more truthful single
+reference, since `forex_strategy.run_backtest` derives rollover-crossing counts
+directly from exit_bar_offset for every test row.
 
 This IS the production training target -- `TimeSeriesSplitter`
 (forex_ml/data/splitting.py) calls `triple_barrier_labels_from_frame` once per pair
@@ -68,12 +95,48 @@ def count_rollovers_crossed(entry_ts: float, exit_ts: float) -> int:
 
 @dataclass
 class TripleBarrierLabels:
-    label: np.ndarray            # +1 profit-take hit, -1 stop-loss hit, 0 timed out
-    exit_bar_offset: np.ndarray  # bars from entry to the exit (max_holding_bars if timed out)
-    net_return_pct: np.ndarray   # realized % return at the exit bar, net of cost
-    raw_return_pct: np.ndarray   # realized % return at the exit bar, BEFORE cost -- what a
+    label: np.ndarray            # +1 long's profit-take won, -1 short's profit-take won, 0 flat
+    exit_bar_offset: np.ndarray  # bars from entry to the winning (or, if flat, earlier-resolving) race's exit
+    net_return_pct: np.ndarray   # that race's realized % return at its exit bar, net of cost
+    raw_return_pct: np.ndarray   # realized % return at that same exit bar, BEFORE cost -- what a
                                  # downstream backtest (which charges its own cost) should use as
                                  # "the move," rather than net_return_pct which would double-count it
+
+
+def _run_single_side_race(
+    price: np.ndarray,
+    timestamp: np.ndarray,
+    i: int,
+    entry_price: float,
+    entry_ts: float,
+    entry_cost_pct: float,
+    profit_take_pct: float,
+    stop_loss_pct: float,
+    max_holding_bars: int,
+    swap_cost_pct_per_night: float,
+    sign: float,
+) -> tuple[int, int, float, float]:
+    """Walk bars 1..max_holding_bars forward from entry bar `i`, checking one
+    side's own economics (`sign=+1` long, `sign=-1` short) against the barriers.
+    Returns (hit_type, exit_bar_offset, net_return_pct, raw_return_pct), where
+    hit_type is +1 (this side's profit-take fired), -1 (this side's stop-loss
+    fired), or 0 (timed out)."""
+    for j in range(1, max_holding_bars + 1):
+        exit_ts = timestamp[i + j]
+        raw_return_pct = 100.0 * (price[i + j] - entry_price) / entry_price
+        swap_cost_pct = swap_cost_pct_per_night * count_rollovers_crossed(entry_ts, exit_ts)
+        net = sign * raw_return_pct - entry_cost_pct - swap_cost_pct
+
+        if net >= profit_take_pct:
+            return 1, j, net, raw_return_pct
+        if net <= -stop_loss_pct:
+            return -1, j, net, raw_return_pct
+
+    j = max_holding_bars
+    raw_return_pct = 100.0 * (price[i + j] - entry_price) / entry_price
+    swap_cost_pct = swap_cost_pct_per_night * count_rollovers_crossed(entry_ts, timestamp[i + j])
+    net = sign * raw_return_pct - entry_cost_pct - swap_cost_pct
+    return 0, j, net, raw_return_pct
 
 
 def triple_barrier_labels(
@@ -83,7 +146,8 @@ def triple_barrier_labels(
     profit_take_pct: float,
     stop_loss_pct: float,
     max_holding_bars: int,
-    swap_cost_pct_per_night: float = 0.0,
+    long_swap_cost_pct_per_night: float = 0.0,
+    short_swap_cost_pct_per_night: float = 0.0,
 ) -> TripleBarrierLabels:
     """`price`/`spread`/`timestamp` must already be sorted chronologically for one
     (instrument, granularity) pair (e.g. mid_close/spread_close/unix_epoch_s from
@@ -101,6 +165,8 @@ def triple_barrier_labels(
         raise ValueError("max_holding_bars must be >= 1")
     if n <= max_holding_bars:
         raise ValueError(f"Need more than max_holding_bars={max_holding_bars} rows, got {n}")
+    if np.any(spread < 0):
+        raise ValueError("spread must be non-negative")
 
     n_labelable = n - max_holding_bars
     label = np.zeros(n_labelable, dtype=int)
@@ -113,30 +179,34 @@ def triple_barrier_labels(
         entry_ts = timestamp[i]
         entry_cost_pct = 100.0 * spread[i] / entry_price  # one round-trip spread charge
 
-        hit = False
-        for j in range(1, max_holding_bars + 1):
-            exit_ts = timestamp[i + j]
-            raw_return_pct = 100.0 * (price[i + j] - entry_price) / entry_price
-            swap_cost_pct = swap_cost_pct_per_night * count_rollovers_crossed(entry_ts, exit_ts)
-            net = raw_return_pct - entry_cost_pct - swap_cost_pct
+        long_hit, long_j, long_net, long_raw = _run_single_side_race(
+            price, timestamp, i, entry_price, entry_ts, entry_cost_pct,
+            profit_take_pct, stop_loss_pct, max_holding_bars,
+            long_swap_cost_pct_per_night, sign=1.0,
+        )
+        short_hit, short_j, short_net, short_raw = _run_single_side_race(
+            price, timestamp, i, entry_price, entry_ts, entry_cost_pct,
+            profit_take_pct, stop_loss_pct, max_holding_bars,
+            short_swap_cost_pct_per_night, sign=-1.0,
+        )
 
-            if net >= profit_take_pct:
-                label[i], exit_bar_offset[i], net_return_pct[i] = 1, j, net
-                raw_return_pct_out[i] = raw_return_pct
-                hit = True
-                break
-            if net <= -stop_loss_pct:
-                label[i], exit_bar_offset[i], net_return_pct[i] = -1, j, net
-                raw_return_pct_out[i] = raw_return_pct
-                hit = True
-                break
+        long_wins = long_hit == 1
+        short_wins = short_hit == 1
 
-        if not hit:
-            j = max_holding_bars
-            raw_return_pct = 100.0 * (price[i + j] - entry_price) / entry_price
-            swap_cost_pct = swap_cost_pct_per_night * count_rollovers_crossed(entry_ts, timestamp[i + j])
-            net_return_pct[i] = raw_return_pct - entry_cost_pct - swap_cost_pct
-            raw_return_pct_out[i] = raw_return_pct
+        if long_wins and (not short_wins or long_j <= short_j):
+            label[i], exit_bar_offset[i], net_return_pct[i] = 1, long_j, long_net
+            raw_return_pct_out[i] = long_raw
+        elif short_wins:
+            label[i], exit_bar_offset[i], net_return_pct[i] = -1, short_j, short_net
+            raw_return_pct_out[i] = short_raw
+        else:
+            # Flat: neither side's profit-take fired. Report whichever race
+            # resolved first (tie -> long) as the single reference -- that's the
+            # race whose outcome is actually known soonest, not an arbitrary pick.
+            if long_j <= short_j:
+                exit_bar_offset[i], net_return_pct[i], raw_return_pct_out[i] = long_j, long_net, long_raw
+            else:
+                exit_bar_offset[i], net_return_pct[i], raw_return_pct_out[i] = short_j, short_net, short_raw
 
     return TripleBarrierLabels(
         label=label, exit_bar_offset=exit_bar_offset,
@@ -149,7 +219,8 @@ def triple_barrier_labels_from_frame(
     profit_take_pct: float,
     stop_loss_pct: float,
     max_holding_bars: int,
-    swap_cost_pct_per_night: float = 0.0,
+    long_swap_cost_pct_per_night: float = 0.0,
+    short_swap_cost_pct_per_night: float = 0.0,
     price_column: str = "mid_close",
     spread_column: str = "spread_close",
     timestamp_column: str = "unix_epoch_s",
@@ -164,7 +235,8 @@ def triple_barrier_labels_from_frame(
         df[price_column].to_numpy(),
         df[spread_column].to_numpy(),
         df[timestamp_column].to_numpy(),
-        profit_take_pct, stop_loss_pct, max_holding_bars, swap_cost_pct_per_night,
+        profit_take_pct, stop_loss_pct, max_holding_bars,
+        long_swap_cost_pct_per_night, short_swap_cost_pct_per_night,
     )
     n_labelable = len(df) - max_holding_bars
     out = df.iloc[:n_labelable].copy()

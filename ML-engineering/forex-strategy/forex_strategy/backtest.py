@@ -2,10 +2,15 @@
 decision, and simulate P&L net of spread and (optionally) swap/rollover cost.
 
 Class semantics match forex_ml.data.splitting.TimeSeriesSplitter._label_to_one_hot's
-triple-barrier label mapping: class 0 = stop-loss hit (label -1), class 1 = timed
-out flat (label 0), class 2 = profit-take hit (label +1) -- so highest class = long
-signal, lowest class = short signal, exactly the short/flat/long convention this
-module's `predicted_classes_to_positions` already assumes. Position SIZING is a
+triple-barrier label mapping: class 0 = short's own profit-take independently
+fired (label -1), class 1 = neither side's profit-take fired / flat (label 0),
+class 2 = long's profit-take fired (label +1) -- so highest class = long signal,
+lowest class = short signal, exactly the short/flat/long convention this module's
+`predicted_classes_to_positions` already assumes. (Label -1 used to mean "the
+long's stop-loss hit," a proxy that didn't verify independent short profitability
+-- see triple_barrier.py's module docstring for the bidirectional redesign that
+fixed this; the class/position convention here was already correct and needed no
+change.) Position SIZING is a
 separate concern from the directional call: `position_size_from_realized_volatility`
 below scales size against forex-ML's `realized_volatility` passthrough column (a
 real, already-observed backward-looking average -- see forex-ML's README), not a

@@ -66,6 +66,7 @@ def trained_triple_barrier_model(tmp_path):
     splits = _make_splits(seed=0)
     train_and_evaluate(
         splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="triple_barrier",
-        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3, swap_cost_pct_per_night=0.0,
+        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3,
+        long_swap_cost_pct_per_night=0.0, short_swap_cost_pct_per_night=0.0,
     )
     return {"tracking_uri": params.mlflow_tracking_uri, "splits": splits}

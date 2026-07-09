@@ -45,11 +45,14 @@ MAX_HOLDING_BARS = 3  # small relative to the n used across these tests, so exis
                       # rows off the usable frame.
 
 
-def _splitter(n: int, swap_cost_pct_per_night: float = 0.0) -> TimeSeriesSplitter:
+def _splitter(
+    n: int, long_swap_cost_pct_per_night: float = 0.0, short_swap_cost_pct_per_night: float = 0.0,
+) -> TimeSeriesSplitter:
     return TimeSeriesSplitter(
         _make_pdf(n), _make_non_ts(n), "EUR/USD", "H1", columns_x_components=COLUMNS_X_COMPONENTS,
         profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=MAX_HOLDING_BARS,
-        swap_cost_pct_per_night=swap_cost_pct_per_night,
+        long_swap_cost_pct_per_night=long_swap_cost_pct_per_night,
+        short_swap_cost_pct_per_night=short_swap_cost_pct_per_night,
     )
 
 
@@ -98,34 +101,41 @@ def test_npz_round_trip(tmp_path):
     np.testing.assert_array_equal(splits.test["y_raw"], loaded.test["y_raw"])
     np.testing.assert_array_equal(splits.test["exit_bar_offset"], loaded.test["exit_bar_offset"])
     np.testing.assert_array_equal(splits.test["realized_volatility"], loaded.test["realized_volatility"])
-    assert loaded.swap_cost_pct_per_night == splits.swap_cost_pct_per_night
+    assert loaded.long_swap_cost_pct_per_night == splits.long_swap_cost_pct_per_night
+    assert loaded.short_swap_cost_pct_per_night == splits.short_swap_cost_pct_per_night
 
 
-def test_splits_carries_the_swap_cost_actually_used_to_label_it():
-    """Splits.swap_cost_pct_per_night must reflect whatever value the splitter was
-    actually constructed with, not the class default -- this is what lets train.py
-    read back the value that really produced these labels instead of re-deriving a
+def test_splits_carries_the_swap_costs_actually_used_to_label_it():
+    """Splits' long/short swap costs must reflect whatever values the splitter was
+    actually constructed with, not the class defaults -- this is what lets train.py
+    read back the values that really produced these labels instead of re-deriving a
     (possibly since-drifted) live rate. See Splits' docstring."""
-    splitter = _splitter(80, swap_cost_pct_per_night=0.0123)
+    splitter = _splitter(80, long_swap_cost_pct_per_night=0.0123, short_swap_cost_pct_per_night=0.0456)
     splits = splitter.split_train_val_test_by_proportion([0.6, 0.2])
     assert splits.train["M"] is not None  # sanity: split actually produced data
-    assert splits.swap_cost_pct_per_night == pytest.approx(0.0123)
+    assert splits.long_swap_cost_pct_per_night == pytest.approx(0.0123)
+    assert splits.short_swap_cost_pct_per_night == pytest.approx(0.0456)
 
 
-def test_load_npz_defaults_swap_cost_pct_per_night_to_zero_for_pre_migration_files(tmp_path):
-    """A .npz written before swap_cost_pct_per_night existed as a key -- save_npz
-    always writes it now, so simulate an old file by saving one, then rewriting it
-    without that key."""
-    splits = _splitter(50, swap_cost_pct_per_night=0.05).split_train_val_test_by_proportion([0.6, 0.2])
+def test_load_npz_defaults_swap_costs_to_zero_independently_for_pre_migration_files(tmp_path):
+    """A .npz written before long/short swap costs existed as keys -- save_npz
+    always writes both now, so simulate an old file by saving one, then rewriting
+    it with each key independently missing (matching a splitting.py that never had
+    either key, or that only had the pre-bidirectional single long value)."""
+    splits = _splitter(
+        50, long_swap_cost_pct_per_night=0.05, short_swap_cost_pct_per_night=0.07,
+    ).split_train_val_test_by_proportion([0.6, 0.2])
     path = tmp_path / "pre_migration.npz"
     splits.save_npz(path)
 
     data = dict(np.load(path))
-    del data["swap_cost_pct_per_night"]
+    del data["long_swap_cost_pct_per_night"]
+    del data["short_swap_cost_pct_per_night"]
     np.savez_compressed(path, **data)
 
     loaded = Splits.load_npz(path)
-    assert loaded.swap_cost_pct_per_night == 0.0
+    assert loaded.long_swap_cost_pct_per_night == 0.0
+    assert loaded.short_swap_cost_pct_per_night == 0.0
 
 
 def test_test_split_y_raw_matches_raw_return_pct_not_net_of_cost():

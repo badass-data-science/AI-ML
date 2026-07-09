@@ -42,11 +42,14 @@ def load_split_and_save_task(
         split_params.columns_x,
     )
 
-    # Prefer a real, live swap rate over params.yaml's configured constant --
-    # falls back to it automatically if no live snapshot exists yet (see
-    # resolve_swap_cost_pct_per_night). Long side only: triple-barrier labeling is
-    # long-side-only by design (see triple_barrier.py's module docstring).
-    resolved_long_swap, _ = resolve_swap_cost_pct_per_night(instrument, split_params.swap_cost_pct_per_night)
+    # Prefer real, live swap rates over params.yaml's configured constant -- falls
+    # back to it automatically (for both sides) if no live snapshot exists yet
+    # (see resolve_swap_cost_pct_per_night). Both long and short are resolved and
+    # threaded through, since triple-barrier labeling now runs an independent
+    # race for each side (see triple_barrier.py's module docstring).
+    resolved_long_swap, resolved_short_swap = resolve_swap_cost_pct_per_night(
+        instrument, split_params.swap_cost_pct_per_night,
+    )
 
     splitter = TimeSeriesSplitter(
         pdf, pdf_non_time_series, instrument, granularity,
@@ -54,7 +57,8 @@ def load_split_and_save_task(
         profit_take_pct=split_params.profit_take_pct,
         stop_loss_pct=split_params.stop_loss_pct,
         max_holding_bars=split_params.max_holding_bars,
-        swap_cost_pct_per_night=resolved_long_swap,
+        long_swap_cost_pct_per_night=resolved_long_swap,
+        short_swap_cost_pct_per_night=resolved_short_swap,
     )
     # purge_bars: a window can reach n_back bars backward and a triple-barrier label
     # can reach max_holding_bars bars forward, so either direction can cross a split

@@ -161,7 +161,8 @@ def train_and_evaluate(
     profit_take_pct: float,
     stop_loss_pct: float,
     max_holding_bars: int,
-    swap_cost_pct_per_night: float,
+    long_swap_cost_pct_per_night: float,
+    short_swap_cost_pct_per_night: float,
     *,
     experiment_name: str | None = None,
     register_model: bool = True,
@@ -173,15 +174,16 @@ def train_and_evaluate(
     dict of test metrics.
 
     `n_back`/`lookahead`/`column_y`/`profit_take_pct`/`stop_loss_pct`/
-    `max_holding_bars`/`swap_cost_pct_per_night` are FeatureParams/SplitParams, not
-    TrainParams, but are logged here anyway (not just used to locate the splits file
-    / interpret y_raw) so that forex_ml.evaluation.multiple_comparisons's
-    config-signature hash can tell two runs with different windowing, barrier
-    hyperparameters, OR prediction targets apart. Without this, two runs that only
-    differ in one of these would log an otherwise-IDENTICAL set of params and get
-    silently collapsed into "the same configuration, just retrained" -- keeping only
-    the most recent one and discarding the other, exactly the failure mode that
-    whole-config hashing was built to prevent. `column_y` is always `"triple_barrier"`
+    `max_holding_bars`/`long_swap_cost_pct_per_night`/`short_swap_cost_pct_per_night`
+    are FeatureParams/SplitParams, not TrainParams, but are logged here anyway (not
+    just used to locate the splits file / interpret y_raw) so that
+    forex_ml.evaluation.multiple_comparisons's config-signature hash can tell two
+    runs with different windowing, barrier hyperparameters, OR prediction targets
+    apart. Without this, two runs that only differ in one of these would log an
+    otherwise-IDENTICAL set of params and get silently collapsed into "the same
+    configuration, just retrained" -- keeping only the most recent one and
+    discarding the other, exactly the failure mode that whole-config hashing was
+    built to prevent. `column_y` is always `"triple_barrier"`
     for real training runs now (kept as an explicit param, not hardcoded, so it still
     flows through logging/tagging uniformly) -- lets a downstream consumer
     (forex-strategy's backtest) confirm what `Splits.test["y_raw"]`/the
@@ -226,7 +228,8 @@ def train_and_evaluate(
             "profit_take_pct": profit_take_pct,
             "stop_loss_pct": stop_loss_pct,
             "max_holding_bars": max_holding_bars,
-            "swap_cost_pct_per_night": swap_cost_pct_per_night,
+            "long_swap_cost_pct_per_night": long_swap_cost_pct_per_night,
+            "short_swap_cost_pct_per_night": short_swap_cost_pct_per_night,
             **params.model_dump(exclude={"mlflow_experiment_name", "mlflow_tracking_uri"}),
             **(extra_params or {}),
         }
@@ -346,17 +349,18 @@ def run(instrument: str, granularity: str, params_path: str | Path | None = None
     params = load_params(params_path) if params_path else load_params()
     key = pair_key(instrument, granularity, params.feature.n_back, params.feature.lookahead)
     splits = Splits.load_npz(splits_npz_path(params.feature.output_dir, key))
-    # splits.swap_cost_pct_per_night, not params.split.swap_cost_pct_per_night --
-    # split_flow.py (a separate process invocation, potentially run hours or days
-    # earlier) already resolved a live rate and baked it into these labels; a
-    # fresh live rate could have drifted since then, and logging one that had zero
+    # splits.long/short_swap_cost_pct_per_night, not params.split.swap_cost_pct_per_night
+    # -- split_flow.py (a separate process invocation, potentially run hours or days
+    # earlier) already resolved live rates and baked them into these labels; fresh
+    # live rates could have drifted since then, and logging values that had zero
     # influence on this splits.npz's y/y_raw would be a real, silent mismatch. See
-    # Splits.swap_cost_pct_per_night's docstring.
+    # Splits' long/short swap-cost docstring.
     return train_and_evaluate(
         splits, params.train, instrument, granularity, Path(params.feature.output_dir),
         params.feature.n_back, params.feature.lookahead, "triple_barrier",
         params.split.profit_take_pct, params.split.stop_loss_pct,
-        params.split.max_holding_bars, splits.swap_cost_pct_per_night,
+        params.split.max_holding_bars,
+        splits.long_swap_cost_pct_per_night, splits.short_swap_cost_pct_per_night,
     )
 
 

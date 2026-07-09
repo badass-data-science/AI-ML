@@ -17,12 +17,27 @@ from forex_ml.evaluation.multiple_comparisons import (
 from forex_ml.training.train import train_and_evaluate
 
 
-def test_config_signature_ignores_swap_cost_pct_per_night():
-    """swap_cost_pct_per_night is now resolved from a live InfluxDB snapshot (see
-    forex_ml.data.swap_rates), not a hyperparameter a human chose -- two runs of
-    the SAME hyperparameters on different days would otherwise get different
-    signatures purely because OANDA's rate ticked in between, silently fracturing
-    the "same configuration, retrained" grouping this signature exists to support."""
+def test_config_signature_ignores_long_and_short_swap_cost_pct_per_night():
+    """long/short_swap_cost_pct_per_night are now resolved from a live InfluxDB
+    snapshot (see forex_ml.data.swap_rates), not hyperparameters a human chose --
+    two runs of the SAME hyperparameters on different days would otherwise get
+    different signatures purely because OANDA's rate ticked in between, silently
+    fracturing the "same configuration, retrained" grouping this signature exists
+    to support."""
+    base = {
+        "n_back": 200, "lookahead": 4, "learning_rate": 0.0001,
+        "long_swap_cost_pct_per_night": 0.00679, "short_swap_cost_pct_per_night": -0.00234,
+    }
+    drifted = {**base, "long_swap_cost_pct_per_night": -0.01234, "short_swap_cost_pct_per_night": 0.00987}
+
+    assert config_signature_from_params(base) == config_signature_from_params(drifted)
+
+
+def test_config_signature_ignores_the_old_pre_bidirectional_swap_cost_key_too():
+    """Real historical MLflow runs were logged with the old, single
+    swap_cost_pct_per_night key before the bidirectional redesign -- it must stay
+    excluded permanently so re-running this against old runs doesn't silently
+    change their config signatures."""
     base = {"n_back": 200, "lookahead": 4, "learning_rate": 0.0001, "swap_cost_pct_per_night": 0.00679}
     drifted = {**base, "swap_cost_pct_per_night": -0.01234}
 
@@ -30,7 +45,10 @@ def test_config_signature_ignores_swap_cost_pct_per_night():
 
 
 def test_config_signature_still_distinguishes_real_hyperparameter_changes():
-    base = {"n_back": 200, "lookahead": 4, "learning_rate": 0.0001, "swap_cost_pct_per_night": 0.0}
+    base = {
+        "n_back": 200, "lookahead": 4, "learning_rate": 0.0001,
+        "long_swap_cost_pct_per_night": 0.0, "short_swap_cost_pct_per_night": 0.0,
+    }
     different_lr = {**base, "learning_rate": 0.001}
 
     assert config_signature_from_params(base) != config_signature_from_params(different_lr)
@@ -133,11 +151,13 @@ def test_report_across_pairs_finds_both_pairs_end_to_end(tmp_path):
 
     train_and_evaluate(
         _make_splits(0), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="triple_barrier",
-        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3, swap_cost_pct_per_night=0.0,
+        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3,
+        long_swap_cost_pct_per_night=0.0, short_swap_cost_pct_per_night=0.0,
     )
     train_and_evaluate(
         _make_splits(1), params, "AUD/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="triple_barrier",
-        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3, swap_cost_pct_per_night=0.0,
+        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3,
+        long_swap_cost_pct_per_night=0.0, short_swap_cost_pct_per_night=0.0,
     )
 
     report = report_across_pairs(tracking_uri, "cross-pair-test", baseline="majority")
@@ -288,12 +308,12 @@ def test_report_across_pairs_treats_different_n_back_as_separate_hypotheses(tmp_
     train_and_evaluate(
         _make_splits(0, n_back=10), params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2,
         column_y="triple_barrier", profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3,
-        swap_cost_pct_per_night=0.0,
+        long_swap_cost_pct_per_night=0.0, short_swap_cost_pct_per_night=0.0,
     )
     train_and_evaluate(
         _make_splits(1, n_back=24), params, "EUR/USD", "H1", tmp_path, n_back=24, lookahead=2,
         column_y="triple_barrier", profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3,
-        swap_cost_pct_per_night=0.0,
+        long_swap_cost_pct_per_night=0.0, short_swap_cost_pct_per_night=0.0,
     )
 
     report = report_across_pairs(tracking_uri, "n-back-test", baseline="majority")

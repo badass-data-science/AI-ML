@@ -92,7 +92,9 @@ def run_rolling_cv(
     # Resolved ONCE for the whole run, not per-fold -- avoids a redundant
     # InfluxDB round trip per fold and keeps every fold's logged value consistent
     # (rather than N slightly different live snapshots if the rate ticks mid-run).
-    resolved_long_swap, _ = resolve_swap_cost_pct_per_night(instrument, params.split.swap_cost_pct_per_night)
+    resolved_long_swap, resolved_short_swap = resolve_swap_cost_pct_per_night(
+        instrument, params.split.swap_cost_pct_per_night,
+    )
 
     splitter = TimeSeriesSplitter(
         pdf, pdf_non_time_series, instrument, granularity,
@@ -100,7 +102,8 @@ def run_rolling_cv(
         profit_take_pct=params.split.profit_take_pct,
         stop_loss_pct=params.split.stop_loss_pct,
         max_holding_bars=params.split.max_holding_bars,
-        swap_cost_pct_per_night=resolved_long_swap,
+        long_swap_cost_pct_per_night=resolved_long_swap,
+        short_swap_cost_pct_per_night=resolved_short_swap,
     )
 
     resolved_purge_bars = (
@@ -120,7 +123,7 @@ def run_rolling_cv(
             fold_splits, params.train, instrument, granularity, Path(params.feature.output_dir),
             params.feature.n_back, params.feature.lookahead, "triple_barrier",
             params.split.profit_take_pct, params.split.stop_loss_pct,
-            params.split.max_holding_bars, resolved_long_swap,
+            params.split.max_holding_bars, resolved_long_swap, resolved_short_swap,
             experiment_name=experiment_name,
             register_model=False,
             extra_params={"fold_index": i, "window_type": window, "diagnostic": "rolling_cv"},

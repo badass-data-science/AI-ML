@@ -68,7 +68,8 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
 
     test_results = train_and_evaluate(
         splits, params, "EUR/USD", "H1", tmp_path, n_back=10, lookahead=2, column_y="triple_barrier",
-        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3, swap_cost_pct_per_night=0.0,
+        profit_take_pct=0.5, stop_loss_pct=0.5, max_holding_bars=3,
+        long_swap_cost_pct_per_night=0.0, short_swap_cost_pct_per_night=0.0,
     )
     assert "loss" in test_results
     assert "baseline_majority_accuracy" in test_results
@@ -97,7 +98,8 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
     assert run.data.params["profit_take_pct"] == "0.5"
     assert run.data.params["stop_loss_pct"] == "0.5"
     assert run.data.params["max_holding_bars"] == "3"
-    assert run.data.params["swap_cost_pct_per_night"] == "0.0"
+    assert run.data.params["long_swap_cost_pct_per_night"] == "0.0"
+    assert run.data.params["short_swap_cost_pct_per_night"] == "0.0"
     assert run.data.tags["recovered_from_batch_checkpoint"] == "False"
 
     registered = client.search_registered_models(filter_string="name = 'test-experiment'")

@@ -119,35 +119,55 @@ fixed-horizon percent change. This replaced an earlier `pd_lead`/`volatility_lea
 scheme (both still computed in Stage 1 as diagnostic-only reference columns — see
 below — but neither is trainable anymore).
 
-Each row is labeled by whichever of three barriers is hit first, walking forward
-bar-by-bar from the entry: a **profit-take** barrier (label `+1`), a **stop-loss**
-barrier (label `-1`), or a **max-holding-period** deadline with no barrier hit
-(label `0`, "timed out"). Thresholds are checked against the *net-of-cost* return —
-one round-trip spread charge, plus swap/rollover for every 5pm-New-York boundary
-actually crossed — so a "win" means the trade would have cleared costs, not just
-that price moved the right way. The label maps directly onto the same class
-convention the rest of the pipeline (and `forex-strategy`'s backtest) already
-assumes: `-1 → class 0` (short signal), `0 → class 1` (flat), `+1 → class 2` (long
-signal) — no percentile-threshold fitting needed, since the label is already
-discrete.
+Each row is labeled by running TWO independent first-passage "races" forward
+bar-by-bar from the entry — one assuming a **long** position, one assuming a
+**short** — each checked against its own *net-of-cost* return (one round-trip
+spread charge, plus swap/rollover for every 5pm-New-York boundary actually
+crossed, using that side's own swap rate). Whichever side's profit-take fires
+first determines the label: long's profit-take firing (and short's not, or not
+yet) → `+1`; short's profit-take firing (and long's not, or not yet) → `-1`; if
+neither side's profit-take ever fires within `max_holding_bars` (either side hit
+its own stop-loss, or both timed out) → `0`, flat. The label maps directly onto
+the same class convention the rest of the pipeline (and `forex-strategy`'s
+backtest) already assumes: `-1 → class 0` (short signal), `0 → class 1` (flat),
+`+1 → class 2` (long signal) — no percentile-threshold fitting needed, since the
+label is already discrete.
+
+This is a genuine redesign, not the original scheme: earlier, only the long race
+existed, and `-1` just meant "the long's stop-loss fired" — reused as a "short
+signal" without ever independently confirming a short would actually have been
+profitable. That was a real bug: long's stop-loss and short's true profitability
+are NOT mirror images once cost enters — cost *adds to* a long's loss (so a
+smaller drop stops it out), but cost *eats into* a short's gain (so it takes a
+*bigger* drop for a short to genuinely clear its own profit-take). The old scheme
+systematically overstated how easy it was for a short to win. Expect the fixed
+scheme to produce a real class-balance shift toward more flat (`class 1`) labels
+relative to the old one — a "short" label now requires independently confirmed
+short profitability, not just "the long lost." That's the redesign doing its job
+correctly, not a regression to chase. See `forex_ml/data/triple_barrier.py`'s
+module docstring for the exact merge/tie-break rules (including how the rare
+same-bar double-fire case is resolved by an explicit, tested rule rather than
+assumed to be unreachable).
 
 Four `params.yaml` knobs control it, under `split:`:
 
-- `profit_take_pct` / `stop_loss_pct` — net-of-cost return thresholds (percent).
-- `max_holding_bars` — the vertical barrier: give up and label `0` after this many
-  bars if neither of the other two was hit.
+- `profit_take_pct` / `stop_loss_pct` — net-of-cost return thresholds (percent),
+  shared by both the long and short race.
+- `max_holding_bars` — the vertical barrier: give up on both races and label `0`
+  after this many bars if neither side's profit-take was hit.
 - `swap_cost_pct_per_night` — charged once per 5pm-New-York rollover boundary
   actually crossed (DST-aware). This is now a **fallback only**:
-  `split_flow.py`/`rolling_cv.py` prefer a real, live rate fetched from
+  `split_flow.py`/`rolling_cv.py` prefer real, live rates fetched from
   forex-etl's `swap-rate` InfluxDB measurement (see
-  `forex_ml/data/swap_rates.py`), falling back to this constant only if no live
-  snapshot exists yet for the pair being trained. OANDA's `long_rate`/`short_rate`
-  are annual rates as decimals (0.05 = 5%/year, confirmed via OANDA's own v20 API
-  docs), converted to a per-night percentage (`rate * 100 / 365`, a simple
-  Actual/365 approximation) and sign-flipped so a real charge becomes a positive
-  cost. Long side only, matching triple-barrier labeling's long-side-only design
-  (see `triple_barrier.py`'s module docstring) — `short_rate` isn't used here,
-  only by forex-strategy's backtest, which trades both directions.
+  `forex_ml/data/swap_rates.py`), falling back to this constant (for both the
+  long and short race) only if no live snapshot exists yet for the pair being
+  trained. OANDA's `long_rate`/`short_rate` are annual rates as decimals (0.05 =
+  5%/year, confirmed via OANDA's own v20 API docs), converted to a per-night
+  percentage (`rate * 100 / 365`, a simple Actual/365 approximation) and
+  sign-flipped so a real charge becomes a positive cost. Both sides are resolved
+  and used now (`resolve_swap_cost_pct_per_night` returns a `(long, short)`
+  tuple) — the short rate used to be discarded here, back when labeling was
+  long-side-only.
 
 **None of the four current threshold values (`profit_take_pct`/`stop_loss_pct`/
 `max_holding_bars`/the `swap_cost_pct_per_night` fallback) have been empirically
@@ -636,14 +656,14 @@ from forex_ml.data.triple_barrier import triple_barrier_labels_from_frame
 labeled = triple_barrier_labels_from_frame(
     df,  # Stage-1 df_non_time_series, sorted by unix_epoch_s for one pair
     profit_take_pct=0.5, stop_loss_pct=0.3, max_holding_bars=8,
-    swap_cost_pct_per_night=0.02,  # e.g. the negative of a SwapRateRecord long_rate, if negative
+    long_swap_cost_pct_per_night=0.02,   # e.g. the negative of a SwapRateRecord long_rate, if negative
+    short_swap_cost_pct_per_night=0.01,  # e.g. the negative of a SwapRateRecord short_rate, if negative
 )
 ```
 
-For a real value instead of a guessed one, `forex_ml.data.swap_rates.fetch_current_swap_rates(instrument)`
+For real values instead of guessed ones, `forex_ml.data.swap_rates.fetch_current_swap_rates(instrument)`
 returns `(long, short)` already converted from OANDA's raw annual-rate-as-decimal
-convention to this per-night percentage — `triple_barrier_labels_from_frame` only
-ever wants the long side (see "Long-side only" below).
+convention to this per-night percentage — pass both straight through.
 
 Swap/rollover is charged once per 5pm New York rollover boundary *actually crossed*
 between entry and exit — computed DST-aware in local `America/New_York` time
@@ -653,9 +673,11 @@ charged a night's swap or not, not just a soft diurnal-pattern approximation. An
 intraday (H1/M15) hold usually crosses zero rollovers; multi-day holds accumulate
 one charge per night actually held through, not one per bar.
 
-Long-side only: the upper barrier is a profit-take and the lower a stop-loss *for a
-long position* — a short-side/bidirectional variant would need its own sign
-convention and isn't built here.
+Bidirectional: two independent races (long, short) run per row, each against its
+own swap-cost input — see "The prediction target: triple-barrier labeling" above
+for the merge/tie-break rules, and `triple_barrier.py`'s module docstring for the
+full detail (including why a same-bar double-fire needs an explicit tie-break
+rather than being assumed impossible, and why `spread` must be non-negative).
 
 ## Tests
 
