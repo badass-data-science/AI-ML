@@ -42,6 +42,7 @@ from pyspark.sql import SparkSession
 
 from forex_ml.config import load_params
 from forex_ml.data.splitting import TimeSeriesSplitter, load_and_stack
+from forex_ml.data.swap_rates import resolve_swap_cost_pct_per_night
 from forex_ml.paths import non_time_series_parquet_path, pair_key, time_series_parquet_path
 from forex_ml.spark_session import DEFAULT_SPARK_MEMORY, build_spark_session
 from forex_ml.training.train import train_and_evaluate
@@ -88,13 +89,18 @@ def run_rolling_cv(
         str(non_time_series_parquet_path(params.feature.output_dir, key)),
         params.split.columns_x,
     )
+    # Resolved ONCE for the whole run, not per-fold -- avoids a redundant
+    # InfluxDB round trip per fold and keeps every fold's logged value consistent
+    # (rather than N slightly different live snapshots if the rate ticks mid-run).
+    resolved_long_swap, _ = resolve_swap_cost_pct_per_night(instrument, params.split.swap_cost_pct_per_night)
+
     splitter = TimeSeriesSplitter(
         pdf, pdf_non_time_series, instrument, granularity,
         columns_x_components=params.split.columns_x,
         profit_take_pct=params.split.profit_take_pct,
         stop_loss_pct=params.split.stop_loss_pct,
         max_holding_bars=params.split.max_holding_bars,
-        swap_cost_pct_per_night=params.split.swap_cost_pct_per_night,
+        swap_cost_pct_per_night=resolved_long_swap,
     )
 
     resolved_purge_bars = (
@@ -114,7 +120,7 @@ def run_rolling_cv(
             fold_splits, params.train, instrument, granularity, Path(params.feature.output_dir),
             params.feature.n_back, params.feature.lookahead, "triple_barrier",
             params.split.profit_take_pct, params.split.stop_loss_pct,
-            params.split.max_holding_bars, params.split.swap_cost_pct_per_night,
+            params.split.max_holding_bars, resolved_long_swap,
             experiment_name=experiment_name,
             register_model=False,
             extra_params={"fold_index": i, "window_type": window, "diagnostic": "rolling_cv"},

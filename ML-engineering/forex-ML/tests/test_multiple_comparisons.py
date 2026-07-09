@@ -10,10 +10,30 @@ from forex_ml.config import TrainParams
 from forex_ml.data.splitting import Splits
 from forex_ml.evaluation.multiple_comparisons import (
     benjamini_hochberg_report,
+    config_signature_from_params,
     mcnemar_p_value,
     report_across_pairs,
 )
 from forex_ml.training.train import train_and_evaluate
+
+
+def test_config_signature_ignores_swap_cost_pct_per_night():
+    """swap_cost_pct_per_night is now resolved from a live InfluxDB snapshot (see
+    forex_ml.data.swap_rates), not a hyperparameter a human chose -- two runs of
+    the SAME hyperparameters on different days would otherwise get different
+    signatures purely because OANDA's rate ticked in between, silently fracturing
+    the "same configuration, retrained" grouping this signature exists to support."""
+    base = {"n_back": 200, "lookahead": 4, "learning_rate": 0.0001, "swap_cost_pct_per_night": 0.00679}
+    drifted = {**base, "swap_cost_pct_per_night": -0.01234}
+
+    assert config_signature_from_params(base) == config_signature_from_params(drifted)
+
+
+def test_config_signature_still_distinguishes_real_hyperparameter_changes():
+    base = {"n_back": 200, "lookahead": 4, "learning_rate": 0.0001, "swap_cost_pct_per_night": 0.0}
+    different_lr = {**base, "learning_rate": 0.001}
+
+    assert config_signature_from_params(base) != config_signature_from_params(different_lr)
 
 
 def test_mcnemar_identical_predictions_give_p_value_of_one():

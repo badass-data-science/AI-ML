@@ -44,6 +44,9 @@ CANDLE_FIELDS = {
 }
 CANDLE_TAGS = frozenset({"instrument", "granularity"})
 
+SWAP_RATE_FIELDS = {"long_rate": float, "short_rate": float}
+SWAP_RATE_TAGS = frozenset({"instrument"})
+
 
 def _docker_available() -> bool:
     return shutil.which("docker") is not None
@@ -132,6 +135,31 @@ def seeded_candles(influxdb_container):
     # a moment before the tests below query it back.
     time.sleep(2)
     return {"n": n, "timestamps": timestamps, "instrument": "EUR/USD", "granularity": "H1"}
+
+
+@pytest.fixture
+def seeded_swap_rates(influxdb_container):
+    """Seed the test InfluxDB with a synthetic swap-rate snapshot for EUR/USD,
+    using the real InfluxDbTool write path -- mirrors seeded_candles above, but for
+    forex_ml.data.swap_rates' measurement/schema instead."""
+    from python_tools_and_shortcuts.databases.influxdb.InfluxDbTool import InfluxDbTool
+
+    ifc = InfluxDbTool(influxdb_container["url"], influxdb_container["token"], influxdb_container["org"])
+
+    long_rate = -0.0248  # real EUR/USD magnitude observed live -- a small annual cost
+    short_rate = 0.0046  # a small annual credit
+    timestamp = int(datetime.datetime.now(tz=datetime.timezone.utc).timestamp())
+
+    records = [{
+        "measurement": "swap-rate",
+        "tags": {"instrument": "EUR/USD"},
+        "fields": {"long_rate": long_rate, "short_rate": short_rate},
+        "time": timestamp,
+    }]
+    ifc.insert_dictionary_list(records, SWAP_RATE_TAGS, SWAP_RATE_FIELDS, influxdb_container["bucket"])
+
+    time.sleep(2)
+    return {"instrument": "EUR/USD", "long_rate": long_rate, "short_rate": short_rate, "timestamp": timestamp}
 
 
 def _patch_database_config(monkeypatch, influxdb_container) -> None:
@@ -225,3 +253,31 @@ def test_prepare_data_flow_end_to_end_against_real_influxdb(
     pdf_time_series = spark.read.parquet(str(ts_path)).toPandas()
     assert len(pdf_time_series) > 0
     assert "pd_lead" in pdf_time_series.columns
+
+
+def test_fetch_current_swap_rates_reads_back_real_seeded_data(monkeypatch, influxdb_container, seeded_swap_rates):
+    _patch_database_config(monkeypatch, influxdb_container)
+
+    from forex_ml.data import swap_rates
+
+    result = swap_rates.fetch_current_swap_rates(seeded_swap_rates["instrument"])
+
+    assert result is not None
+    long_swap, short_swap = result
+    expected_long = -1.0 * (seeded_swap_rates["long_rate"] * 100.0) / 365.0
+    expected_short = -1.0 * (seeded_swap_rates["short_rate"] * 100.0) / 365.0
+    assert long_swap == pytest.approx(expected_long)
+    assert short_swap == pytest.approx(expected_short)
+
+
+def test_fetch_current_swap_rates_returns_none_for_an_uningested_instrument(
+    monkeypatch, influxdb_container, seeded_swap_rates,
+):
+    """Regression check for the InfluxDbTool timestamp fix in a different guise:
+    confirms querying a real container for an instrument with no data returns None
+    cleanly, rather than raising or returning a garbage row."""
+    _patch_database_config(monkeypatch, influxdb_container)
+
+    from forex_ml.data import swap_rates
+
+    assert swap_rates.fetch_current_swap_rates("GBP/USD") is None

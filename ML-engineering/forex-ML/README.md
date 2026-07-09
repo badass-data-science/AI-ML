@@ -137,14 +137,24 @@ Four `params.yaml` knobs control it, under `split:`:
 - `max_holding_bars` — the vertical barrier: give up and label `0` after this many
   bars if neither of the other two was hit.
 - `swap_cost_pct_per_night` — charged once per 5pm-New-York rollover boundary
-  actually crossed (DST-aware). Currently a **configured constant**, not a live
-  rate — forex-ML doesn't ingest forex-etl's `swap-rate` InfluxDB measurement yet;
-  wiring that in is a separate, natural next step.
+  actually crossed (DST-aware). This is now a **fallback only**:
+  `split_flow.py`/`rolling_cv.py` prefer a real, live rate fetched from
+  forex-etl's `swap-rate` InfluxDB measurement (see
+  `forex_ml/data/swap_rates.py`), falling back to this constant only if no live
+  snapshot exists yet for the pair being trained. OANDA's `long_rate`/`short_rate`
+  are annual rates as decimals (0.05 = 5%/year, confirmed via OANDA's own v20 API
+  docs), converted to a per-night percentage (`rate * 100 / 365`, a simple
+  Actual/365 approximation) and sign-flipped so a real charge becomes a positive
+  cost. Long side only, matching triple-barrier labeling's long-side-only design
+  (see `triple_barrier.py`'s module docstring) — `short_rate` isn't used here,
+  only by forex-strategy's backtest, which trades both directions.
 
-**None of the four current values have been empirically validated** the way
-`n_back=200` was (via real ACF/PACF diagnostics) — they're starting points to
-revisit once there's a real look at each pair's move-size distribution, not a
-considered final answer. See `params.yaml`'s own comments for the current values.
+**None of the four current threshold values (`profit_take_pct`/`stop_loss_pct`/
+`max_holding_bars`/the `swap_cost_pct_per_night` fallback) have been empirically
+validated** the way `n_back=200` was (via real ACF/PACF diagnostics) — they're
+starting points to revisit once there's a real look at each pair's move-size
+distribution, not a considered final answer. See `params.yaml`'s own comments for
+the current values.
 
 `pd_lead`/`spread_close_lead`/`volatility_lead` remain valid, useful **reference**
 columns for diagnostics — `forex_ml.diagnostics.autocorrelation`'s `--column` flag
@@ -570,6 +580,11 @@ labeled = triple_barrier_labels_from_frame(
     swap_cost_pct_per_night=0.02,  # e.g. the negative of a SwapRateRecord long_rate, if negative
 )
 ```
+
+For a real value instead of a guessed one, `forex_ml.data.swap_rates.fetch_current_swap_rates(instrument)`
+returns `(long, short)` already converted from OANDA's raw annual-rate-as-decimal
+convention to this per-night percentage — `triple_barrier_labels_from_frame` only
+ever wants the long side (see "Long-side only" below).
 
 Swap/rollover is charged once per 5pm New York rollover boundary *actually crossed*
 between entry and exit — computed DST-aware in local `America/New_York` time

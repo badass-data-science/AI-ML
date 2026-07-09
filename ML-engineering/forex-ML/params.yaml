@@ -37,9 +37,12 @@ split:
   max_holding_bars: 24  # a full day at H1 -- gives barriers real room to be hit
                         # rather than almost always timing out, unlike the old
                         # lookahead=4 fixed-horizon window
-  swap_cost_pct_per_night: 0.0  # placeholder until real swap rates are ingested
-                                # from forex-etl's swap-rate measurement (not wired
-                                # in yet -- see forex-strategy's README roadmap)
+  swap_cost_pct_per_night: 0.0  # FALLBACK only -- split_flow.py/rolling_cv.py now
+                                # prefer a real, live rate from forex-etl's
+                                # swap-rate measurement (see
+                                # forex_ml/data/swap_rates.py), falling back to
+                                # this constant only if no live snapshot exists
+                                # yet for the pair being trained
   columns_x: [volatility, return, diff_spread_close, diff_volume, day_sin, day_cos, is_tokyo_session, is_london_session, is_new_york_session, is_london_new_york_overlap]
   train_val_proportion: [0.7, 0.15]
 
@@ -86,8 +89,16 @@ train:
   reduce_lr_on_plateau_factor: 0.9
   reduce_lr_on_plateau_patience: 3
   early_stopping_patience: 8
-  gradient_clip_norm: 1.0
-  input_clip_value: 10.0
+  # Tightened from 1.0/10.0 after the EUR/USD H1 triple-barrier run diverged to NaN
+  # loss ~42% through epoch 1 (2026-07-08) -- same architecture/seed that trained
+  # cleanly under the old fixed-horizon target, so the heavy-tailed features
+  # (diff_volume in particular) combined with 5 stacked 300-cell LSTM layers and the
+  # new target's different loss landscape found an unstable trajectory the looser
+  # bounds didn't catch. Not yet re-validated against a clean run at these tighter
+  # values -- revisit if this also diverges, or if it trains clean but accuracy
+  # suffers noticeably versus the pre-migration baseline.
+  gradient_clip_norm: 0.5
+  input_clip_value: 5.0
   tensorflow_seed: 54
   mlflow_experiment_name: forex-lstm
   mlflow_tracking_uri: "sqlite:///mlflow.db"

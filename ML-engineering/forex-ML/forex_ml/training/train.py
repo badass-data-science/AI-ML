@@ -254,11 +254,17 @@ def run(instrument: str, granularity: str, params_path: str | Path | None = None
     params = load_params(params_path) if params_path else load_params()
     key = pair_key(instrument, granularity, params.feature.n_back, params.feature.lookahead)
     splits = Splits.load_npz(splits_npz_path(params.feature.output_dir, key))
+    # splits.swap_cost_pct_per_night, not params.split.swap_cost_pct_per_night --
+    # split_flow.py (a separate process invocation, potentially run hours or days
+    # earlier) already resolved a live rate and baked it into these labels; a
+    # fresh live rate could have drifted since then, and logging one that had zero
+    # influence on this splits.npz's y/y_raw would be a real, silent mismatch. See
+    # Splits.swap_cost_pct_per_night's docstring.
     return train_and_evaluate(
         splits, params.train, instrument, granularity, Path(params.feature.output_dir),
         params.feature.n_back, params.feature.lookahead, "triple_barrier",
         params.split.profit_take_pct, params.split.stop_loss_pct,
-        params.split.max_holding_bars, params.split.swap_cost_pct_per_night,
+        params.split.max_holding_bars, splits.swap_cost_pct_per_night,
     )
 
 

@@ -99,6 +99,17 @@ class Splits:
     train: dict[str, np.ndarray]
     val: dict[str, np.ndarray]
     test: dict[str, np.ndarray]
+    # The swap_cost_pct_per_night actually used to compute this Splits' triple-
+    # barrier labels (see forex_ml.data.swap_rates.resolve_swap_cost_pct_per_night)
+    # -- persisted here, not re-derived later, because split_flow.py (which
+    # produces this) and train.py's run() (which loads it back) are separate
+    # process invocations that can happen hours or days apart. If train.py
+    # independently re-resolved a live rate instead of reading this back, its
+    # MLflow-logged swap_cost_pct_per_night could silently mismatch the value
+    # that actually produced y/y_raw -- logging a number with zero influence on
+    # the labels it's supposedly describing. Defaults to 0.0 for pre-migration
+    # .npz files that don't have it (see load_npz).
+    swap_cost_pct_per_night: float = 0.0
 
     def save_npz(self, path: str | Path) -> None:
         """Replaces the original pickle.dump(...) — .npz is a zip of plain .npy arrays,
@@ -122,6 +133,7 @@ class Splits:
             train_M=self.train["M"], train_y=self.train["y"],
             val_M=self.val["M"], val_y=self.val["y"],
             test_M=self.test["M"], test_y=self.test["y"],
+            swap_cost_pct_per_night=self.swap_cost_pct_per_night,
             test_timestamp=self.test["timestamp"], test_price=self.test["price"], test_spread=self.test["spread"],
             test_y_raw=self.test["y_raw"], test_exit_bar_offset=self.test["exit_bar_offset"],
             test_realized_volatility=self.test["realized_volatility"],
@@ -139,6 +151,10 @@ class Splits:
                 "y_raw": data["test_y_raw"], "exit_bar_offset": data["test_exit_bar_offset"],
                 "realized_volatility": data["test_realized_volatility"],
             },
+            # Pre-migration .npz files (written before swap rates were wired in)
+            # don't have this key -- default to 0.0, matching the placeholder
+            # constant that was in effect when they were written.
+            swap_cost_pct_per_night=float(data["swap_cost_pct_per_night"]) if "swap_cost_pct_per_night" in data else 0.0,
         )
 
 
@@ -179,6 +195,10 @@ class TimeSeriesSplitter:
         self.granularity = granularity
         self.timestamp_column = timestamp_column
         self.columns_x_components = columns_x_components
+        # Stashed so _build_splits can attach it to the Splits it returns -- see
+        # Splits.swap_cost_pct_per_night's docstring for why this needs to survive
+        # the split/train process boundary rather than being re-derived later.
+        self.swap_cost_pct_per_night = swap_cost_pct_per_night
 
         df_pair = (
             df[(df["instrument"] == instrument) & (df["granularity"] == granularity)]
@@ -385,6 +405,7 @@ class TimeSeriesSplitter:
                 # forward-looking volatility model.
                 "realized_volatility": df_test["realized_volatility"].to_numpy(),
             },
+            swap_cost_pct_per_night=self.swap_cost_pct_per_night,
         )
 
     def split_train_val_test_by_proportion(self, train_val_proportion: list[float], purge_bars: int = 0) -> Splits:

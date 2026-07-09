@@ -99,8 +99,18 @@ def config_signature_from_params(params: dict) -> str:
     signature multiple_comparisons would later compute for its run — str()'ing both
     call sites' values the same way keeps the two hashes identical for the same
     configuration.
+
+    `swap_cost_pct_per_night` is ALSO excluded, despite being a real input to the
+    labeling math -- since forex_ml.data.swap_rates.resolve_swap_cost_pct_per_night
+    started resolving it from a live InfluxDB snapshot (see split_flow.py), it's an
+    environmentally-resolved value that can drift between two otherwise-identical
+    retrains of the same hyperparameters on different days, not a hyperparameter a
+    human chose. Without this exclusion, two runs a human considers "the same
+    configuration, retrained" would get different signatures purely because OANDA's
+    rate ticked in between, silently fracturing the BH-FDR pool below and the model
+    registry's "one canonical config per (pair, hyperparams)" assumption.
     """
-    excluded = {"instrument", "granularity", "run_uid"}
+    excluded = {"instrument", "granularity", "run_uid", "swap_cost_pct_per_night"}
     items = sorted((k, str(v)) for k, v in params.items() if k not in excluded)
     payload = json.dumps(items, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()[:12]

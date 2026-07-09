@@ -56,6 +56,9 @@ class SplitParams(BaseModel):
     profit_take_pct: float
     stop_loss_pct: float
     max_holding_bars: int
+    # FALLBACK only -- split_flow.py/rolling_cv.py prefer a real, live rate from
+    # forex_ml.data.swap_rates.resolve_swap_cost_pct_per_night, using this constant
+    # only if no live snapshot exists yet for the pair being trained.
     swap_cost_pct_per_night: float = 0.0
     columns_x: list[str]
     train_val_proportion: list[float]

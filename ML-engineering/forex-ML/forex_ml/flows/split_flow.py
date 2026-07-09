@@ -15,6 +15,7 @@ from pyspark.sql import SparkSession
 
 from forex_ml.config import SplitParams, load_params
 from forex_ml.data.splitting import TimeSeriesSplitter, load_and_stack
+from forex_ml.data.swap_rates import resolve_swap_cost_pct_per_night
 from forex_ml.paths import non_time_series_parquet_path, pair_key, splits_npz_path, time_series_parquet_path
 from forex_ml.spark_session import DEFAULT_SPARK_MEMORY, build_spark_session
 
@@ -41,13 +42,19 @@ def load_split_and_save_task(
         split_params.columns_x,
     )
 
+    # Prefer a real, live swap rate over params.yaml's configured constant --
+    # falls back to it automatically if no live snapshot exists yet (see
+    # resolve_swap_cost_pct_per_night). Long side only: triple-barrier labeling is
+    # long-side-only by design (see triple_barrier.py's module docstring).
+    resolved_long_swap, _ = resolve_swap_cost_pct_per_night(instrument, split_params.swap_cost_pct_per_night)
+
     splitter = TimeSeriesSplitter(
         pdf, pdf_non_time_series, instrument, granularity,
         columns_x_components=split_params.columns_x,
         profit_take_pct=split_params.profit_take_pct,
         stop_loss_pct=split_params.stop_loss_pct,
         max_holding_bars=split_params.max_holding_bars,
-        swap_cost_pct_per_night=split_params.swap_cost_pct_per_night,
+        swap_cost_pct_per_night=resolved_long_swap,
     )
     # purge_bars: a window can reach n_back bars backward and a triple-barrier label
     # can reach max_holding_bars bars forward, so either direction can cross a split
