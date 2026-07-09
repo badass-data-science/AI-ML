@@ -70,7 +70,23 @@ pairs:
   - {instrument: USD/JPY, key: USD_JPY, granularity: M15}
 
 train:
-  number_of_cells_per_rnn_layer: [300, 300, 300, 300, 300]
+  # Reduced from [300, 300, 300, 300, 300] (2026-07-10) after a rolling-CV depth
+  # comparison (3 folds each, width held fixed at 300, EUR/USD H1) -- 3 layers beat
+  # BOTH 5 and 2 layers, not just 5: 5 layers barely cleared (arguably lost to) the
+  # majority-class baseline (LSTM mean accuracy 0.367 vs baseline 0.368) with real
+  # fold-to-fold noise (std 0.045); 2 layers was worse than baseline (0.346) and
+  # far less consistent (std 0.075, one fold at 0.264, another at 0.413); 3 layers
+  # clearly beat the baseline (0.379) with the tightest spread of the three (std
+  # 0.020), while training 2.6x faster than 5 layers. A naive "just cut depth"
+  # guess could easily have landed on 2 layers, which turned out to be the worst
+  # option -- 3 is a genuine sweet spot, not an endpoint of a monotonic trend.
+  # Also a plausible contributor to the NaN-divergence investigation's fragility
+  # (fewer stacked layers directly shortens the compounding chain implicated
+  # there), though that wasn't separately isolated in this comparison.
+  # This used a scaled-down diagnostic (3 folds, ~8000-bar training windows, not
+  # the full ~11-year history) to keep runtime bounded -- a real directional
+  # signal, not the same statistical weight as a full-scale study.
+  number_of_cells_per_rnn_layer: [300, 300, 300]
   number_of_cells_per_dense_layer: [7]
   lstm_activation_function: relu
   dense_activation_function: relu

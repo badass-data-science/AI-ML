@@ -169,9 +169,10 @@ optimizer in `forex_ml/training/model.py`) bounds the gradient norm on every tra
 step. This was added after the first real training run at `n_back=200` against full
 production history — loss diverged to NaN partway through the very first epoch, on
 clean, NaN/Inf-free input data. The cause was unclipped gradients exploding through
-deep backprop-through-time: `number_of_cells_per_rnn_layer: [300, 300, 300, 300, 300]`
-means 5 stacked LSTM layers, and `n_back=200` means each layer unrolls 200 timesteps —
-a lot of multiplicative depth for gradients to blow up across if nothing bounds them.
+deep backprop-through-time: `number_of_cells_per_rnn_layer` was `[300, 300, 300, 300,
+300]` at the time (5 stacked LSTM layers — see "Layer depth" below for why it's 3
+now), and `n_back=200` means each layer unrolls 200 timesteps — a lot of
+multiplicative depth for gradients to blow up across if nothing bounds them.
 
 This gap was **always there**, not something the modernization introduced — the
 original `lstm.py`'s `compile_generic_regressor` had no gradient clipping either (see
@@ -203,12 +204,13 @@ clipped-but-still-large value; `input_clip_value` bounds how large that value ca
 in the first place.
 
 **Even both together don't fully eliminate the risk** — confirmed directly (2026-07-10)
-via a controlled investigation after another real divergence: the same architecture,
-data, and seed diverged to NaN at wildly different, unpredictable points (immediately,
-~42% through an epoch, ~98% through, or not at all) across both looser and tighter
-clip values, on both CPU and GPU. This looks like genuine, hard-to-fully-eliminate
-numerical fragility inherent to 5 stacked 300-cell LSTM layers unrolled 200 steps deep
-on real fat-tailed financial data, not a bug traceable to either clip value
+via a controlled investigation after another real divergence: the same architecture
+(5 stacked 300-cell LSTM layers, the depth in use at the time — see "Layer depth"
+below), data, and seed diverged to NaN at wildly different, unpredictable points
+(immediately, ~42% through an epoch, ~98% through, or not at all) across both looser
+and tighter clip values, on both CPU and GPU. This looks like genuine, hard-to-fully-
+eliminate numerical fragility inherent to many stacked LSTM layers unrolled 200 steps
+deep on real fat-tailed financial data, not a bug traceable to either clip value
 specifically — tightening `gradient_clip_norm`/`input_clip_value` was tried and
 reverted; it didn't help. `train.py` now treats this as an accepted risk to *recover*
 from rather than fully prevent:
@@ -228,6 +230,36 @@ from rather than fully prevent:
 
 A clean run is achievable — verified directly — just not guaranteed on the first
 attempt.
+
+### Layer depth
+
+`train.number_of_cells_per_rnn_layer` is `[300, 300, 300]` (3 stacked LSTM layers) —
+reduced from `[300, 300, 300, 300, 300]` (5 layers) on 2026-07-10, after a rolling-CV
+depth comparison (`forex_ml.evaluation.rolling_cv`, 3 folds each, width held fixed at
+300, EUR/USD H1) turned up a real sweet spot rather than a monotonic "fewer is
+better" trend:
+
+| Depth | LSTM test accuracy (mean ± std across folds) | vs. majority baseline (0.368) |
+|---|---|---|
+| 5 layers | 0.367 ± 0.045 | essentially tied — arguably losing |
+| **3 layers** | **0.379 ± 0.020** | clearly ahead, and the most consistent fold-to-fold |
+| 2 layers | 0.346 ± 0.075 | worse than baseline, and the least consistent (0.264–0.413 spread) |
+
+5 layers was too deep — barely clearing (arguably losing to) the trivial majority-
+class baseline, with real fold-to-fold noise. 2 layers was too shallow — worse than
+baseline on average *and* by far the least stable of the three. A naive "just cut
+depth" guess could easily have landed on 2 layers, which turned out to be the worst
+option here, not the best — exactly the kind of thing empirical testing over guessing
+is meant to catch. 3 layers also trains roughly 2.6x faster than 5, and — though not
+separately isolated in this comparison — fewer stacked layers plausibly reduces the
+numerical fragility described above too, since it directly shortens the
+compounding-through-depth chain implicated there.
+
+This used a scaled-down diagnostic (3 folds, ~8,000-bar training windows, not the
+full ~11-year history) to keep runtime bounded on a single workstation — a real
+directional signal, not the same statistical weight as a full-scale study. Like
+`profit_take_pct`/`stop_loss_pct`/`max_holding_bars`, this hasn't been re-validated
+against the full production dataset.
 
 ## Running a single pair
 
