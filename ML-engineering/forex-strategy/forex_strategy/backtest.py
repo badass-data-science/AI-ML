@@ -75,7 +75,8 @@ def simulate_trades(
     position_size: np.ndarray | None = None,
     entry_timestamp: np.ndarray | None = None,
     exit_timestamp: np.ndarray | None = None,
-    swap_cost_pct_per_night: float = 0.0,
+    long_swap_cost_pct_per_night: float = 0.0,
+    short_swap_cost_pct_per_night: float = 0.0,
     flatten_before_rollover: bool = False,
 ) -> BacktestResult:
     """Spread is charged as the full round-trip cost -- buying at ask and later
@@ -85,15 +86,19 @@ def simulate_trades(
     (forex-ML computes `spread_close_lead` in Stage 1 but doesn't currently plumb
     it through Splits).
 
-    Swap/rollover, if `swap_cost_pct_per_night` is nonzero, is charged once per 5pm
+    Swap/rollover, if either swap-cost param is nonzero, is charged once per 5pm
     New York rollover boundary actually crossed between `entry_timestamp` and
     `exit_timestamp` (via forex-ML's `count_rollovers_crossed` -- DST-aware, not a
     fixed-UTC approximation), not once per bar held -- an intraday hold usually
-    crosses zero rollovers. `flatten_before_rollover=True` implements the "flatten
-    by 5pm" rule instead of paying swap: any row whose holding period would cross a
-    rollover is forced flat (skipped) rather than held through it and charged --
-    both `swap_cost_pct_per_night` and `flatten_before_rollover` require
-    `entry_timestamp`/`exit_timestamp`.
+    crosses zero rollovers. Direction matters: a long position is charged
+    `long_swap_cost_pct_per_night`, a short position `short_swap_cost_pct_per_night`
+    -- these are genuinely different, independently-signed real-world rates (see
+    forex_ml.data.swap_rates), not one rate mirrored with a flip, so passing the
+    same value for both would silently misprice one side. `flatten_before_rollover=True`
+    implements the "flatten by 5pm" rule instead of paying swap: any row whose
+    holding period would cross a rollover is forced flat (skipped) rather than held
+    through it and charged -- both swap-cost params and `flatten_before_rollover`
+    require `entry_timestamp`/`exit_timestamp`.
 
     `position_size` (default: all ones) scales both P&L and cost proportionally,
     so a 0.3-size position produces 30% of a full-size position's P&L AND 30% of
@@ -117,11 +122,12 @@ def simulate_trades(
     elif len(position_size) != n:
         raise ValueError("position_size must be the same length as positions")
 
-    needs_timestamps = swap_cost_pct_per_night != 0.0 or flatten_before_rollover
+    needs_timestamps = long_swap_cost_pct_per_night != 0.0 or short_swap_cost_pct_per_night != 0.0 \
+        or flatten_before_rollover
     if needs_timestamps and (entry_timestamp is None or exit_timestamp is None):
         raise ValueError(
-            "entry_timestamp and exit_timestamp are required when swap_cost_pct_per_night "
-            "is set or flatten_before_rollover is True"
+            "entry_timestamp and exit_timestamp are required when long_swap_cost_pct_per_night or "
+            "short_swap_cost_pct_per_night is set or flatten_before_rollover is True"
         )
     if needs_timestamps and not (len(entry_timestamp) == len(exit_timestamp) == n):  # type: ignore[arg-type]
         raise ValueError("entry_timestamp/exit_timestamp must be the same length as positions")
@@ -145,7 +151,8 @@ def simulate_trades(
     abs_size = np.abs(sized_positions)
     gross_pnl_pct = sized_positions * raw_return_pct
     spread_cost_pct = np.where(is_trade, abs_size * 100.0 * spread / price, 0.0)
-    swap_cost_pct = np.where(is_trade, abs_size * swap_cost_pct_per_night * n_rollovers, 0.0)
+    swap_rate_per_row = np.where(positions > 0, long_swap_cost_pct_per_night, short_swap_cost_pct_per_night)
+    swap_cost_pct = np.where(is_trade, abs_size * swap_rate_per_row * n_rollovers, 0.0)
     cost_pct = spread_cost_pct + swap_cost_pct
     net_pnl_pct = np.where(is_trade, gross_pnl_pct - cost_pct, 0.0)
 

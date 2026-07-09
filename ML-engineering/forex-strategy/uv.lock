@@ -3931,6 +3931,7 @@ name = "python-tools-and-shortcuts"
 version = "0.1.0"
 source = { editable = "../../../python-tools-and-shortcuts" }
 dependencies = [
+    { name = "influxdb-client" },
     { name = "matplotlib" },
     { name = "neo4j" },
     { name = "nltk" },
@@ -3944,15 +3945,18 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "influxdb-client", specifier = ">=1.36" },
     { name = "matplotlib", specifier = ">=3.7" },
     { name = "neo4j", specifier = ">=5.0" },
     { name = "nltk", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "pandas", specifier = ">=2.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "scikit-fuzzy", specifier = ">=0.4.2" },
     { name = "statsmodels", specifier = ">=0.14" },
     { name = "yfinance", specifier = ">=0.2.40" },
 ]
+provides-extras = ["dev"]
 
 [[package]]
 name = "pytz"

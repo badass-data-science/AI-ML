@@ -59,11 +59,35 @@ def test_backtest_from_mlflow_finds_the_triple_barrier_version_even_when_a_later
 def test_backtest_from_mlflow_supports_swap_cost_and_flatten_before_rollover(trained_triple_barrier_model):
     result = backtest_from_mlflow(
         trained_triple_barrier_model["tracking_uri"], "EUR/USD", "H1",
-        swap_cost_pct_per_night=0.02, flatten_before_rollover=True,
+        long_swap_cost_pct_per_night=0.02, short_swap_cost_pct_per_night=0.01, flatten_before_rollover=True,
     )
     splits = trained_triple_barrier_model["splits"]
     assert result.n_rows == splits.test["M"].shape[0]
     assert result.n_flattened_for_rollover >= 0
+
+
+def test_backtest_from_mlflow_uses_live_swap_cost_when_requested(trained_triple_barrier_model, monkeypatch):
+    """use_live_swap_cost=True should call resolve_swap_cost_pct_per_night and feed
+    its result into the backtest, rather than the plain fallback floats -- doesn't
+    need a real InfluxDB, just proves the wiring reaches the resolver."""
+    import forex_strategy.run_backtest as run_backtest_module
+
+    calls = []
+
+    def fake_resolve(instrument, fallback_long, fallback_short=None):
+        calls.append((instrument, fallback_long, fallback_short))
+        return (0.03, -0.02)
+
+    monkeypatch.setattr(run_backtest_module, "resolve_swap_cost_pct_per_night", fake_resolve)
+
+    result = backtest_from_mlflow(
+        trained_triple_barrier_model["tracking_uri"], "EUR/USD", "H1",
+        use_live_swap_cost=True,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][0] == "EUR/USD"
+    assert isinstance(result.net_pnl_pct, float)
 
 
 def test_backtest_from_mlflow_uses_realized_volatility_position_sizing(trained_triple_barrier_model):

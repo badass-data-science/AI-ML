@@ -137,7 +137,7 @@ def test_simulate_trades_charges_swap_only_when_a_rollover_is_crossed():
 
     result = simulate_trades(
         positions, pd_lead_pct, spread, price,
-        entry_timestamp=entry, exit_timestamp=exit_, swap_cost_pct_per_night=0.05,
+        entry_timestamp=entry, exit_timestamp=exit_, long_swap_cost_pct_per_night=0.05,
     )
 
     assert result.cost_pct == pytest.approx(0.05)  # only row 1 crosses a rollover
@@ -147,7 +147,7 @@ def test_simulate_trades_charges_swap_only_when_a_rollover_is_crossed():
 def test_simulate_trades_requires_timestamps_for_swap_cost():
     with pytest.raises(ValueError, match="entry_timestamp"):
         simulate_trades(
-            np.array([1]), np.array([0.1]), np.array([0.0]), np.array([1.1]), swap_cost_pct_per_night=0.05,
+            np.array([1]), np.array([0.1]), np.array([0.0]), np.array([1.1]), long_swap_cost_pct_per_night=0.05,
         )
 
 
@@ -169,9 +169,62 @@ def test_simulate_trades_flatten_before_rollover_skips_crossing_trades_instead_o
     result = simulate_trades(
         positions, pd_lead_pct, spread, price,
         entry_timestamp=entry, exit_timestamp=exit_,
-        swap_cost_pct_per_night=0.05, flatten_before_rollover=True,
+        long_swap_cost_pct_per_night=0.05, flatten_before_rollover=True,
     )
 
     assert result.n_trades == 1  # row 1 was flattened, not held through the rollover
     assert result.n_flattened_for_rollover == 1
     assert result.net_pnl_pct == pytest.approx(1.0)  # row 0 only, no swap ever charged
+
+
+def test_simulate_trades_charges_the_long_rate_for_a_long_only_position():
+    positions = np.array([1, 1])
+    pd_lead_pct = np.array([0.0, 0.0])
+    spread = np.zeros(2)
+    price = np.array([1.10, 1.10])
+    entry = np.array([_ts(2024, 1, 10, 12, 0), _ts(2024, 1, 10, 12, 0)])
+    exit_ = np.array([_ts(2024, 1, 10, 20, 0), _ts(2024, 1, 10, 20, 0)])  # both cross one rollover
+
+    result = simulate_trades(
+        positions, pd_lead_pct, spread, price,
+        entry_timestamp=entry, exit_timestamp=exit_,
+        long_swap_cost_pct_per_night=0.05, short_swap_cost_pct_per_night=999.0,  # would blow up cost if misapplied
+    )
+
+    assert result.cost_pct == pytest.approx(0.10)  # 2 rows * 0.05, the long rate only
+
+
+def test_simulate_trades_charges_the_short_rate_for_a_short_only_position():
+    positions = np.array([-1, -1])
+    pd_lead_pct = np.array([0.0, 0.0])
+    spread = np.zeros(2)
+    price = np.array([1.10, 1.10])
+    entry = np.array([_ts(2024, 1, 10, 12, 0), _ts(2024, 1, 10, 12, 0)])
+    exit_ = np.array([_ts(2024, 1, 10, 20, 0), _ts(2024, 1, 10, 20, 0)])
+
+    result = simulate_trades(
+        positions, pd_lead_pct, spread, price,
+        entry_timestamp=entry, exit_timestamp=exit_,
+        long_swap_cost_pct_per_night=999.0, short_swap_cost_pct_per_night=0.03,
+    )
+
+    assert result.cost_pct == pytest.approx(0.06)  # 2 rows * 0.03, the short rate only
+
+
+def test_simulate_trades_selects_swap_rate_per_row_for_mixed_long_and_short_positions():
+    positions = np.array([1, -1, 0])
+    pd_lead_pct = np.array([0.0, 0.0, 0.0])
+    spread = np.zeros(3)
+    price = np.array([1.10, 1.10, 1.10])
+    entry = np.array([_ts(2024, 1, 10, 12, 0)] * 3)
+    exit_ = np.array([_ts(2024, 1, 10, 20, 0)] * 3)  # all cross one rollover
+
+    result = simulate_trades(
+        positions, pd_lead_pct, spread, price,
+        entry_timestamp=entry, exit_timestamp=exit_,
+        long_swap_cost_pct_per_night=0.05, short_swap_cost_pct_per_night=0.03,
+    )
+
+    # row 0 (long): 0.05, row 1 (short): 0.03, row 2 (flat): excluded entirely
+    assert result.n_trades == 2
+    assert result.cost_pct == pytest.approx(0.05 + 0.03)

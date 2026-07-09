@@ -62,7 +62,7 @@ booleans.
 ```bash
 uv run python -m forex_strategy.run_backtest \
     --tracking-uri sqlite:///../forex-ML/mlflow.db --instrument EUR/USD --granularity H1 \
-    --swap-cost-pct-per-night 0.02 --flatten-before-rollover --size-by-realized-volatility
+    --use-live-swap-cost --flatten-before-rollover --size-by-realized-volatility
 ```
 
 Each test row's predicted class maps to a position (highest class → long, lowest
@@ -72,12 +72,17 @@ stop-loss hit in the lowest, so this is a direct read of the label, not a tercil
 threshold), and `simulate_trades` computes P&L net of cost:
 
 - **Spread** — charged as the full round-trip cost, always.
-- **Swap/rollover** (`--swap-cost-pct-per-night`) — charged once per 5pm New York
+- **Swap/rollover** (`--long-swap-cost-pct-per-night`/`--short-swap-cost-pct-per-night`,
+  or `--use-live-swap-cost` to fetch real current rates instead — see
+  forex-ML's `forex_ml/data/swap_rates.py`) — charged once per 5pm New York
   rollover boundary *actually crossed* between entry and exit (via forex-ML's
-  `count_rollovers_crossed`, DST-aware), not once per bar held. Exit timestamp is
-  computed from each row's own `test_exit_bar_offset` (how many bars the
-  triple-barrier label actually took to resolve), not a fixed `lookahead` — a real,
-  variable holding period per trade.
+  `count_rollovers_crossed`, DST-aware), not once per bar held. Direction-aware:
+  a long position is charged the long rate, a short position the short rate —
+  these are independently-signed real OANDA fields (e.g. one side can be a net
+  credit while the other is a cost), not one rate mirrored with a flip. Exit
+  timestamp is computed from each row's own `test_exit_bar_offset` (how many bars
+  the triple-barrier label actually took to resolve), not a fixed `lookahead` — a
+  real, variable holding period per trade.
 - **The 5pm-NY flatten rule** (`--flatten-before-rollover`) — instead of paying swap,
   any trade whose holding period would cross a rollover is skipped entirely
   (`BacktestResult.n_flattened_for_rollover` reports how many).
@@ -133,11 +138,10 @@ are now done:
    screening technique now also works with candidates drawn from a different
    instrument than the target, no new ingestion required.
 
-None of forex-etl's three newest sources (swap rates, economic calendar, positioning)
-are consumed by this package's backtest yet beyond the swap-cost/flatten-rule wiring
-already in place — the calendar and positioning data are ingested and available for
-future work (e.g. a calendar-aware volatility overlay, a positioning-based contrarian
-signal), but nothing here reads them yet.
+Of forex-etl's three newest sources, swap rates are now consumed for real (see
+below); economic calendar and positioning data are still just ingested and
+available for future work (e.g. a calendar-aware volatility overlay, a
+positioning-based contrarian signal), with nothing here reading them yet.
 
 **Post-roadmap update:** after all 9 phases above were done, forex-ML made the
 production switch phase 5 anticipated but deferred — triple-barrier labeling now
@@ -148,6 +152,18 @@ the second-model volatility lookup from phase 6 is gone (replaced by the
 `realized_volatility` passthrough column — see "Running the backtest" above), and
 exit-timestamp math uses each row's real `test_exit_bar_offset` instead of a fixed
 `lookahead`.
+
+**Second post-roadmap update:** phase 4's swap-rate ingestion, similarly deferred
+at the time, is now wired in for real too — `--use-live-swap-cost` fetches actual
+OANDA long/short financing rates (via `forex_ml.data.swap_rates`) instead of the
+manual `--long-swap-cost-pct-per-night`/`--short-swap-cost-pct-per-night` constants,
+which now serve only as the fallback when no live snapshot exists yet. This also
+fixed a real, previously-latent bug in the shared `InfluxDbTool` helper (both
+repos depend on): its `unix_epoch_s` conversion assumed nanosecond-precision
+timestamps and silently produced values 1000x too small for a certain class of
+Flux query shape. It never affected this package (nothing here reads InfluxDB
+directly), but the fix landed in the same change since the new swap-rate read
+path would have hit it.
 
 ## Tests
 
