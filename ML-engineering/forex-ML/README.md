@@ -202,6 +202,33 @@ for it: `clipnorm` still bounds how aggressively the model can react to a
 clipped-but-still-large value; `input_clip_value` bounds how large that value can be
 in the first place.
 
+**Even both together don't fully eliminate the risk** — confirmed directly (2026-07-10)
+via a controlled investigation after another real divergence: the same architecture,
+data, and seed diverged to NaN at wildly different, unpredictable points (immediately,
+~42% through an epoch, ~98% through, or not at all) across both looser and tighter
+clip values, on both CPU and GPU. This looks like genuine, hard-to-fully-eliminate
+numerical fragility inherent to 5 stacked 300-cell LSTM layers unrolled 200 steps deep
+on real fat-tailed financial data, not a bug traceable to either clip value
+specifically — tightening `gradient_clip_norm`/`input_clip_value` was tried and
+reverted; it didn't help. `train.py` now treats this as an accepted risk to *recover*
+from rather than fully prevent:
+- `TerminateOnNaN` stops training immediately on the first NaN/Inf loss, instead of
+  grinding through up to `early_stopping_patience` more full epochs of wasted compute
+  on an already-unrecoverable model.
+- A hand-rolled sub-epoch `_BatchCheckpoint` callback saves weights every 200 batches
+  (whenever training loss is finite and improves on the best seen so far), so a run
+  that diverges before completing its first epoch — which is when `ModelCheckpoint`'s
+  ordinary epoch-boundary "best weights" safety net has nothing to fall back to — can
+  still recover most of that epoch's real progress instead of producing a fully
+  unusable model. `train_and_evaluate` checks the recorded loss history (not just the
+  model's weights — a diverged run can produce `loss: inf` with every individual
+  weight still finite) and reloads this checkpoint if needed, tagging the MLflow run
+  with `recovered_from_batch_checkpoint` either way so this is visible rather than
+  silently indistinguishable from a normal run.
+
+A clean run is achievable — verified directly — just not guaranteed on the first
+attempt.
+
 ## Running a single pair
 
 ```bash

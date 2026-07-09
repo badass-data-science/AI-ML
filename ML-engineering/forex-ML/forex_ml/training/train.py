@@ -20,7 +20,7 @@ from pathlib import Path
 import mlflow
 import mlflow.keras
 import numpy as np
-from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TerminateOnNaN
 from tensorflow.random import set_seed
 
 from forex_ml.config import TrainParams, load_params
@@ -32,7 +32,46 @@ from forex_ml.paths import pair_key, splits_npz_path
 from forex_ml.training.model import build_lstm_regressor, compile_model, configure_gpu_memory_growth
 
 
-def _build_callbacks(params: TrainParams, checkpoint_path: Path) -> list:
+# How often (in batches) the sub-epoch safety-net checkpoint below saves. This
+# architecture (5 stacked 300-cell LSTM layers, 200-bar unrolled depth, real
+# fat-tailed financial data) has repeatedly been observed to sometimes diverge to
+# NaN loss partway through epoch 1 -- including as late as 97.6% through it -- and
+# `ModelCheckpoint`'s ordinary epoch-boundary saves have nothing to fall back to
+# when that happens before any epoch ever completes. 200 batches is frequent
+# enough to salvage most of an epoch's progress without excessive disk I/O.
+_BATCH_CHECKPOINT_FREQ = 200
+
+
+class _BatchCheckpoint(Callback):
+    """Sub-epoch safety net: saves weights every `freq` batches, but only if
+    training loss is finite and better than the best seen so far.
+
+    A hand-rolled callback rather than `ModelCheckpoint(save_freq=int,
+    save_best_only=True)` because that combination has a real bug: Keras only
+    initializes `monitor_op` (the comparison function `_is_improvement` needs)
+    inside `on_epoch_end`, so a batch-level save attempted before any epoch has
+    completed -- exactly this class's whole reason for existing -- crashes with
+    `TypeError: 'NoneType' object is not callable`. Tracking "best loss" as a
+    plain instance variable sidesteps that Keras-internal limitation entirely, at
+    the cost of only ever comparing `loss`, not an arbitrary metric.
+    """
+
+    def __init__(self, filepath: str, freq: int) -> None:
+        super().__init__()
+        self.filepath = filepath
+        self.freq = freq
+        self.best_loss = float("inf")
+
+    def on_train_batch_end(self, batch: int, logs: dict | None = None) -> None:
+        loss = logs.get("loss") if logs else None
+        if loss is None or np.isnan(loss) or (batch + 1) % self.freq != 0:
+            return
+        if loss < self.best_loss:
+            self.best_loss = loss
+            self.model.save(self.filepath)
+
+
+def _build_callbacks(params: TrainParams, checkpoint_path: Path, batch_checkpoint_path: Path) -> list:
     return [
         ReduceLROnPlateau(
             monitor="val_loss",
@@ -44,6 +83,15 @@ def _build_callbacks(params: TrainParams, checkpoint_path: Path) -> list:
             monitor="val_loss",
             save_best_only=True,
         ),
+        # Sub-epoch safety net: monitors training `loss` (available every batch,
+        # unlike `val_loss` which only exists at epoch end) so there's still a
+        # recent, usable checkpoint even if the run never completes a full epoch.
+        _BatchCheckpoint(filepath=str(batch_checkpoint_path), freq=_BATCH_CHECKPOINT_FREQ),
+        # Stops training immediately on the first NaN/Inf loss, instead of
+        # grinding through up to `early_stopping_patience` more full epochs of
+        # wasted compute on an already-unrecoverable model (NaN weights, once
+        # produced, propagate through every subsequent Adam update).
+        TerminateOnNaN(),
         EarlyStopping(
             monitor="val_loss",
             patience=params.early_stopping_patience,
@@ -61,6 +109,44 @@ def _log_history(history_dict: dict) -> None:
         if val_key in history_dict:
             for epoch, value in enumerate(history_dict[val_key]):
                 mlflow.log_metric(val_key, value, step=epoch)
+
+
+def _recover_from_divergence_if_needed(model, history_dict: dict, batch_checkpoint_path: Path) -> bool:
+    """A non-finite final train/val loss means this run diverged (see
+    TerminateOnNaN in _build_callbacks) before any epoch completed --
+    EarlyStopping's restore_best_weights has nothing to restore in that case,
+    since it also only checks at epoch boundaries. Checking the recorded loss
+    history (not the model's weights) is deliberate: a diverged run can produce
+    `loss: inf` with every individual WEIGHT still finite (observed directly --
+    large-but-finite weights combined into an overflowing loss computation), so a
+    `np.isnan(w).any()` check over `model.get_weights()` can miss real divergence
+    entirely.
+
+    Falls back to the sub-epoch batch checkpoint (see _BatchCheckpoint), which may
+    hold most of an epoch's real progress instead of a fully unusable model. If
+    even that doesn't exist (divergence within the first _BATCH_CHECKPOINT_FREQ
+    batches), there's nothing to recover and the run proceeds with whatever it
+    has. Returns whether a recovery actually happened, so the caller can tag the
+    run -- this should be visible, not silently indistinguishable from a normal
+    run.
+    """
+    final_train_loss = history_dict.get("loss", [None])[-1]
+    final_val_loss = history_dict.get("val_loss", [None])[-1]
+    training_diverged = any(
+        v is not None and not np.isfinite(v) for v in (final_train_loss, final_val_loss)
+    )
+    if not training_diverged:
+        return False
+
+    if not batch_checkpoint_path.exists():
+        print(f"Training diverged (loss={final_train_loss}, val_loss={final_val_loss}) "
+              "and no sub-epoch checkpoint exists to recover from")
+        return False
+
+    model.load_weights(str(batch_checkpoint_path))
+    print(f"Training diverged (loss={final_train_loss}, val_loss={final_val_loss}); "
+          f"recovered weights from {batch_checkpoint_path}")
+    return True
 
 
 def train_and_evaluate(
@@ -117,6 +203,7 @@ def train_and_evaluate(
     model_dir = Path(output_dir) / "models"
     model_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = model_dir / f"{run_uid}_checkpoint.keras"
+    batch_checkpoint_path = model_dir / f"{run_uid}_batch_checkpoint.keras"
 
     input_shape = (splits.train["M"].shape[1], splits.train["M"].shape[2])
     num_outputs = splits.train["y"].shape[1]
@@ -163,9 +250,14 @@ def train_and_evaluate(
             validation_data=(splits.val["M"], splits.val["y"]),
             epochs=params.epochs,
             batch_size=params.batch_size,
-            callbacks=_build_callbacks(params, checkpoint_path),
+            callbacks=_build_callbacks(params, checkpoint_path, batch_checkpoint_path),
         )
         _log_history(history.history)
+
+        recovered_from_batch_checkpoint = _recover_from_divergence_if_needed(
+            model, history.history, batch_checkpoint_path,
+        )
+        mlflow.set_tag("recovered_from_batch_checkpoint", str(recovered_from_batch_checkpoint))
 
         test_results = model.evaluate(splits.test["M"], splits.test["y"], return_dict=True)
         mlflow.log_metrics({f"test_{k}": v for k, v in test_results.items()})

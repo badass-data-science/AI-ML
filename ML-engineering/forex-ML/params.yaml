@@ -89,16 +89,22 @@ train:
   reduce_lr_on_plateau_factor: 0.9
   reduce_lr_on_plateau_patience: 3
   early_stopping_patience: 8
-  # Tightened from 1.0/10.0 after the EUR/USD H1 triple-barrier run diverged to NaN
-  # loss ~42% through epoch 1 (2026-07-08) -- same architecture/seed that trained
-  # cleanly under the old fixed-horizon target, so the heavy-tailed features
-  # (diff_volume in particular) combined with 5 stacked 300-cell LSTM layers and the
-  # new target's different loss landscape found an unstable trajectory the looser
-  # bounds didn't catch. Not yet re-validated against a clean run at these tighter
-  # values -- revisit if this also diverges, or if it trains clean but accuracy
-  # suffers noticeably versus the pre-migration baseline.
-  gradient_clip_norm: 0.5
-  input_clip_value: 5.0
+  # Reverted to 1.0/10.0 (2026-07-10) after a controlled investigation showed
+  # tightening these to 0.5/5.0 did NOT fix the NaN divergence first seen on
+  # 2026-07-08 -- a faithful repro (same data/seed/model.fit() shuffle order)
+  # diverged under BOTH the loose and tight settings, at wildly different and
+  # unpredictable points (immediately, ~42% in, ~98% in, or not at all), and this
+  # exact architecture's own history already documents two earlier NaN incidents,
+  # one of them AFTER gradient clipping was already in place (see model.py's
+  # ClipInputs docstring). This looks like genuine, hard-to-fully-eliminate
+  # numerical fragility inherent to 5 stacked 300-cell LSTM layers unrolled 200
+  # steps deep on real fat-tailed financial data, not a bug traceable to either of
+  # these two values specifically. train.py now has TerminateOnNaN (fail fast
+  # instead of wasting epochs) and a sub-epoch checkpoint (salvage a diverged
+  # run's progress) as the actual mitigations; a clean run is achievable (verified
+  # directly) but not guaranteed on the first attempt.
+  gradient_clip_norm: 1.0
+  input_clip_value: 10.0
   tensorflow_seed: 54
   mlflow_experiment_name: forex-lstm
   mlflow_tracking_uri: "sqlite:///mlflow.db"
