@@ -181,6 +181,21 @@
       "name": "Oura",
       "ats": "greenhouse",
       "slug": "oura"
+    },
+    {
+      "name": "Neo4j",
+      "ats": "greenhouse",
+      "slug": "neo4j"
+    },
+    {
+      "name": "appomni",
+      "ats": "greenhouse",
+      "slug": "appomni"
+    },
+    {
+      "name": "raspberry",
+      "ats": "ashby",
+      "slug": "raspberry"
     }
   ]
 }
