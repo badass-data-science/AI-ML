@@ -119,6 +119,8 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
     local_path = client.download_artifacts(run.info.run_id, predictions_path, str(artifact_dir))
     predictions = np.load(local_path)
     assert predictions["lstm_pred_proba"].shape == (10, 3)
+    assert predictions["persistence_scored"].shape == predictions["lstm_correct"].shape
+    assert predictions["persistence_correct"].shape == predictions["lstm_correct"].shape
     np.testing.assert_array_equal(predictions["test_timestamp"], splits.test["timestamp"])
     np.testing.assert_array_equal(predictions["test_price"], splits.test["price"])
     np.testing.assert_array_equal(predictions["test_y_raw"], splits.test["y_raw"])

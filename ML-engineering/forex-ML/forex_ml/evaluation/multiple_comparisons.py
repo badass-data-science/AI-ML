@@ -39,10 +39,11 @@ from statsmodels.stats.multitest import multipletests
 
 def mcnemar_p_value(model_a_correct: np.ndarray, model_b_correct: np.ndarray) -> float:
     """p-value from McNemar's test comparing two classifiers' correctness on the
-    same test rows. Requires both arrays aligned 1:1 to the same rows — see the
-    persistence_baseline docstring for why its `correct` array needs an extra
-    alignment step (it's one row shorter) before comparing against another model's
-    full-length array.
+    same test rows. Requires both arrays aligned 1:1 to the same rows — see
+    persistence_baseline's docstring and report_across_pairs's `persistence_scored`
+    handling for why a persistence-baseline comparison needs an extra masking step
+    (a data-dependent number of rows have no causally-valid prior label to score)
+    before both arrays passed here line up row-for-row.
     """
     if len(model_a_correct) != len(model_b_correct):
         raise ValueError(
@@ -66,6 +67,14 @@ def benjamini_hochberg_report(pair_p_values: dict[str, float], alpha: float = 0.
     raw p-value, the BH-adjusted p-value, and whether it's significant AFTER
     correction — the number that actually matters when you're looking across many
     pairs, not the raw per-pair p-value."""
+    if not pair_p_values:
+        # statsmodels.multipletests divides by len(pvals) internally -- a bare
+        # ZeroDivisionError on an empty input, rather than "there's nothing to
+        # report." Can genuinely happen now: report_across_pairs skips runs
+        # whose predictions.npz predates the persistence_baseline fix, so an
+        # experiment containing only pre-fix runs legitimately has zero
+        # survivors, not zero-as-a-bug.
+        return {}
     pairs = list(pair_p_values.keys())
     p_values = [pair_p_values[pair] for pair in pairs]
     reject, p_adjusted, _, _ = multipletests(p_values, alpha=alpha, method="fdr_bh")
@@ -195,9 +204,23 @@ def report_across_pairs(
         baseline_correct = data[f"{baseline}_correct"]
 
         if baseline == "persistence":
-            # persistence_correct is one row shorter (see persistence_baseline) —
-            # align by dropping the LSTM's corresponding first-row prediction.
-            lstm_correct = lstm_correct[1:]
+            # persistence_baseline can only score a row once its persisted-from
+            # prior row has actually resolved (see its docstring) -- a
+            # data-dependent number of rows, not a fixed offset, have no valid
+            # score. `persistence_scored` is a per-row mask over the SAME rows as
+            # lstm_correct/persistence_correct; filtering both by it (rather than
+            # a hardcoded slice) is what keeps them aligned 1:1.
+            if "persistence_scored" not in data:
+                # A predictions.npz logged before persistence_baseline's
+                # causal-validity fix -- it has no scored mask (and its
+                # persistence_correct is the OLD, one-row-shorter, leaky
+                # convention). Not comparable to the new contract; skip this run
+                # rather than silently misalign it or crash the whole report.
+                print(f"Skipping {key}: predictions.npz predates the persistence_baseline fix (no persistence_scored)")
+                continue
+            scored = data["persistence_scored"]
+            lstm_correct = lstm_correct[scored]
+            baseline_correct = baseline_correct[scored]
 
         pair_p_values[key] = mcnemar_p_value(lstm_correct, baseline_correct)
         metadata[key] = {

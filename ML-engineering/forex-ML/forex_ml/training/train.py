@@ -270,7 +270,7 @@ def train_and_evaluate(
         # baseline uses the model or X — if test_accuracy doesn't clear these, the
         # LSTM isn't adding value over a trivial rule.
         majority_result = majority_class_baseline(splits.train["y"], splits.test["y"])
-        persistence_result = persistence_baseline(splits.test["y"])
+        persistence_result = persistence_baseline(splits.test["y"], splits.test["exit_bar_offset"])
         test_results["baseline_majority_accuracy"] = majority_result["accuracy"]
         test_results["baseline_persistence_accuracy"] = persistence_result["accuracy"]
         mlflow.log_metrics({
@@ -282,8 +282,12 @@ def train_and_evaluate(
         # proper paired significance test (McNemar's — see
         # forex_ml/evaluation/multiple_comparisons.py) can compare the LSTM against a
         # baseline on the SAME test rows, rather than treating them as independent
-        # samples. lstm_correct and majority_correct are aligned 1:1 with the full
-        # test set; persistence_correct is one row shorter (see persistence_baseline).
+        # samples. lstm_correct, majority_correct, and persistence_correct are all
+        # aligned 1:1 with the full test set now; persistence_scored marks which
+        # rows persistence_baseline could actually score (it can only ever predict
+        # from a prior row once that row's own label has genuinely resolved, so a
+        # data-dependent number of early rows have no valid prior to persist from —
+        # see persistence_baseline's docstring).
         #
         # Also saved: the raw softmax probabilities (not just top-1 correctness) and
         # the test row's timestamp/price/spread/y_raw/exit_bar_offset/
@@ -302,6 +306,7 @@ def train_and_evaluate(
             lstm_correct=(lstm_pred_idx == lstm_true_idx),
             majority_correct=majority_result["correct"],
             persistence_correct=persistence_result["correct"],
+            persistence_scored=persistence_result["scored"],
             lstm_pred_proba=lstm_pred_proba,
             test_timestamp=splits.test["timestamp"],
             test_price=splits.test["price"],

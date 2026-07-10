@@ -179,6 +179,8 @@ def _log_manual_run(
     majority_correct: np.ndarray,
     artifact_path,
     extra_params: dict | None = None,
+    persistence_correct: np.ndarray | None = None,
+    persistence_scored: np.ndarray | None = None,
 ) -> None:
     """Logs a run with hand-picked predictions.npz content, bypassing real training
     entirely -- for tests that need deterministic control over which run "wins"
@@ -187,9 +189,19 @@ def _log_manual_run(
     `extra_params` simulates other TrainParams (architecture, epochs, etc.) being
     logged alongside instrument/granularity -- used to distinguish "same
     configuration, retrained" from "different configuration, same pair" in
-    _model_config_signature."""
+    _model_config_signature.
+
+    `persistence_correct`/`persistence_scored` default to full-length arrays
+    (matching lstm_correct/majority_correct's length, all rows scored) so tests
+    that only exercise baseline="majority" don't need to care about persistence's
+    contract at all -- pass them explicitly for tests targeting baseline="persistence".
+    """
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(experiment_name)
+    if persistence_correct is None:
+        persistence_correct = majority_correct
+    if persistence_scored is None:
+        persistence_scored = np.ones_like(majority_correct, dtype=bool)
     with mlflow.start_run():
         mlflow.log_params({
             "instrument": instrument, "granularity": granularity, **(extra_params or {}),
@@ -198,7 +210,8 @@ def _log_manual_run(
             artifact_path,
             lstm_correct=lstm_correct,
             majority_correct=majority_correct,
-            persistence_correct=majority_correct[1:],
+            persistence_correct=persistence_correct,
+            persistence_scored=persistence_scored,
         )
         mlflow.log_artifact(str(artifact_path))
 
@@ -319,3 +332,61 @@ def test_report_across_pairs_treats_different_n_back_as_separate_hypotheses(tmp_
     report = report_across_pairs(tracking_uri, "n-back-test", baseline="majority")
 
     assert len(report) == 2  # both n_back values kept, not collapsed to the latest
+
+
+def test_report_across_pairs_persistence_baseline_excludes_unscored_rows_from_mcnemar(tmp_path):
+    """report_across_pairs must mask BOTH lstm_correct and persistence_correct by
+    persistence_scored before McNemar's test -- not just slice off a fixed number
+    of rows. Constructed so the first 20 (unscored) rows are maximally discordant
+    (lstm always right, persistence always wrong) -- if these leaked into the
+    test, the p-value would come out very small. The remaining 180 (scored) rows
+    have lstm and persistence agreeing on every single row (zero discordant
+    pairs), so the correctly-masked result must be p_value == 1.0."""
+    tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    n = 200
+    scored = np.array([False] * 20 + [True] * 180)
+    lstm_correct = np.array([True] * 20 + [True] * 90 + [False] * 90)
+    persistence_correct = np.array([False] * 20 + [True] * 90 + [False] * 90)
+    assert len(lstm_correct) == len(persistence_correct) == len(scored) == n
+
+    _log_manual_run(
+        tracking_uri, "persistence-mask-test", "EUR/USD", "H1",
+        lstm_correct=lstm_correct, majority_correct=lstm_correct,  # unused by this test
+        artifact_path=tmp_path / "run_predictions.npz",
+        persistence_correct=persistence_correct, persistence_scored=scored,
+    )
+
+    report = report_across_pairs(tracking_uri, "persistence-mask-test", baseline="persistence")
+
+    assert len(report) == 1
+    result = next(iter(report.values()))
+    assert result["p_value"] == pytest.approx(1.0)
+
+
+def test_report_across_pairs_skips_runs_missing_persistence_scored(tmp_path):
+    """A predictions.npz logged before the persistence_baseline causal-validity fix
+    has no persistence_scored key (and an old, one-row-shorter persistence_correct
+    convention) -- report_across_pairs must skip that run gracefully (like it
+    already does for a run with no predictions artifact at all) rather than raise
+    a bare KeyError."""
+    tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    n = 50
+    rng = np.random.default_rng(0)
+    lstm_correct = rng.random(n) > 0.5
+
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment("pre-fix-artifact-test")
+    artifact_path = tmp_path / "old_predictions.npz"
+    with mlflow.start_run():
+        mlflow.log_params({"instrument": "EUR/USD", "granularity": "H1"})
+        np.savez_compressed(
+            artifact_path,
+            lstm_correct=lstm_correct,
+            majority_correct=lstm_correct,
+            persistence_correct=lstm_correct[1:],  # old N-1 convention, no scored mask
+        )
+        mlflow.log_artifact(str(artifact_path))
+
+    report = report_across_pairs(tracking_uri, "pre-fix-artifact-test", baseline="persistence")
+
+    assert report == {}  # the only run present predates the fix -- nothing to report, no crash

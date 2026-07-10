@@ -334,8 +334,24 @@ in `params.yaml`), and registers the model in the MLflow Model Registry under
 `train.mlflow_experiment_name`. Alongside the LSTM's own test metrics, every run also
 logs two baselines from `forex_ml/evaluation/baselines.py` — `baseline_majority_test_accuracy`
 (always predict the training set's most common class) and
-`baseline_persistence_test_accuracy` (predict this period repeats the previous
-period's actual class) — so `test_accuracy` is never read in isolation. Every run
+`baseline_persistence_test_accuracy` (predict this period repeats the most recent
+*already-resolved* prior period's actual class) — so `test_accuracy` is never read
+in isolation.
+
+**`baseline_persistence_test_accuracy` had a real information-leakage bug, fixed
+2026-07-10.** It used to predict row `i` using row `i-1`'s actual label
+unconditionally — but under triple-barrier labeling a label isn't resolved until
+its barrier race actually finishes (a mean of ~15 bars out of `max_holding_bars=24`
+on H1 data), so that "previous row" was still unresolved for ~98.5% of rows,
+measured directly on a real EUR/USD H1 test split — the baseline was borrowing up
+to 23 bars of future information. It scored ~0.856 that way; the fixed version
+(persist only from a prior row once its label has genuinely resolved, tracked via
+`exit_bar_offset`) scores ~0.388 — barely above the majority baseline, not the
+dominant baseline the old number implied. Historical MLflow runs logged before this
+fix keep their old (inflated) number; only new runs use the corrected calculation,
+and `forex_ml.evaluation.multiple_comparisons.report_across_pairs` skips any
+pre-fix run when comparing against the persistence baseline rather than silently
+misaligning old- and new-format `predictions.npz` artifacts. Every run
 also logs each split's actual class balance (`train_class_0_balance`,
 `val_class_1_balance`, etc., from `forex_ml/evaluation/class_balance.py`) — train is
 close to even by construction (thresholds come from train quantiles), but val/test
