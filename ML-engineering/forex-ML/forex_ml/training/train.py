@@ -317,7 +317,24 @@ def train_and_evaluate(
         )
         mlflow.log_artifact(str(predictions_path))
 
-        mlflow.keras.log_model(model, name="model")
+        # step=-1: mlflow.keras.log_model (default step=0) tries to re-associate
+        # every metric already logged at that step with this model's model_id, by
+        # re-inserting a copy of each row into the metrics table. When a run
+        # diverges to NaN on the very first epoch (see TerminateOnNaN/
+        # _BatchCheckpoint above), that reinsertion collides with the row
+        # _log_history already wrote for that exact (key, step, value, is_nan)
+        # tuple -- MLflow's own retry-after-conflict logic is supposed to filter
+        # already-existing rows back out before retrying, but its equality check
+        # compares actual metric values, and NaN != NaN, so a NaN-valued row is
+        # never recognized as "already there" and gets retried into the same
+        # conflict, which is NOT caught a second time and crashes the whole run
+        # (observed directly: a real training run that successfully recovered
+        # from mid-epoch-1 divergence via the batch checkpoint still failed at
+        # this exact line with an uncaught sqlite3.IntegrityError). This
+        # step-based metric association isn't used anywhere in this pipeline --
+        # step=-1 guarantees no metric was ever logged at that step, so the
+        # problematic reinsertion never has anything to do, regardless of NaN.
+        mlflow.keras.log_model(model, name="model", step=-1)
         if register_model:
             # Tag the registered model version with instrument/granularity/config
             # signature (the same hash forex_ml.evaluation.multiple_comparisons uses

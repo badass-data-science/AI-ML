@@ -129,6 +129,38 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
     np.testing.assert_array_equal(predictions["test_realized_volatility"], splits.test["realized_volatility"])
 
 
+def test_log_model_after_nan_metric_does_not_crash(tmp_path):
+    """Regression test for a real crash observed on an actual training run:
+    mlflow.keras.log_model's default step=0 tries to re-associate every metric
+    already logged at that step with the newly-created model_id, by reinserting
+    a copy of each row -- when a metric logged at that step is NaN, MLflow's own
+    retry-after-conflict dedup logic fails (NaN != NaN under normal float
+    equality) and the reinsertion raises an uncaught IntegrityError, crashing the
+    whole run. train_and_evaluate now passes step=-1 (nothing is ever logged at
+    that step) specifically to avoid this. This reproduces the exact failure
+    condition (a NaN metric logged at step 0, as happens when TerminateOnNaN
+    fires on the very first epoch) directly against a real MLflow store."""
+    mlflow.set_tracking_uri(f"sqlite:///{tmp_path / 'mlflow.db'}")
+    mlflow.set_experiment("nan-log-model-test")
+    model = build_lstm_regressor(
+        TrainParams(
+            number_of_cells_per_rnn_layer=[2], number_of_cells_per_dense_layer=[2],
+            lstm_activation_function="relu", dense_activation_function="relu",
+            final_dense_activation_function="softmax", epochs=1, batch_size=4, learning_rate=0.001,
+            loss_function="categorical_crossentropy", metrics=["accuracy"],
+            l1_regularization_constant=0.0001, l2_regularization_constant=0.0001,
+            batch_normalization_momentum=0.9, dense_dropout_rate=0.1, rnn_dropout_rate=0.0,
+            rnn_recurrent_dropout_rate=0.0, reduce_lr_on_plateau_factor=0.9,
+            reduce_lr_on_plateau_patience=1, early_stopping_patience=1, tensorflow_seed=1,
+            mlflow_experiment_name="x", mlflow_tracking_uri="sqlite:///:memory:",
+        ),
+        (5, 2), 3,
+    )
+    with mlflow.start_run():
+        mlflow.log_metric("train_loss", float("nan"), step=0)
+        mlflow.keras.log_model(model, name="model", step=-1)  # must not raise
+
+
 def test_recover_from_divergence_if_needed_no_recovery_when_loss_is_finite(tmp_path):
     """Organically forcing this tiny toy architecture to diverge realistically
     (many good batches, then real NaN) turned out to be unreliable -- a
