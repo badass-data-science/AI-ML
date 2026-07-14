@@ -235,10 +235,11 @@ def train_and_evaluate(
         }
         mlflow.log_params(logged_params)
 
-        # Cheap regime-drift check, logged before training even starts: train's class
-        # balance is close to even by construction (thresholds come from train
-        # quantiles), but val/test aren't guaranteed to be if the volatility regime
-        # has shifted between periods.
+        # Cheap regime-drift check, logged before training even starts: train's
+        # class balance is NOT guaranteed to be even -- there's no train-quantile
+        # fitting step in triple-barrier labeling (see class_balance.py's own
+        # docstring) -- and val/test can drift further still if the volatility
+        # regime has shifted between periods.
         for split_name, split in (("train", splits.train), ("val", splits.val), ("test", splits.test)):
             mlflow.log_metrics({
                 f"{split_name}_{class_name}_balance": fraction
@@ -248,12 +249,30 @@ def train_and_evaluate(
         model = build_lstm_regressor(params, input_shape, num_outputs)
         compile_model(model, params)
 
+        # class_weight (inverse-frequency, "balanced" convention: n_total /
+        # (n_classes * count_i)) so a training window that happens to skew
+        # toward one class doesn't get an easy, loss-minimizing shortcut of
+        # just favoring that class -- a plausible independent contributor to
+        # the mode-collapse-to-one-class instability investigated in
+        # forex_ml/training/model.py's module docstring (untested there; this
+        # is the follow-up).
+        train_class_idx = np.argmax(splits.train["y"], axis=1)
+        class_counts = np.bincount(train_class_idx, minlength=splits.train["y"].shape[1])
+        n_train = len(train_class_idx)
+        n_classes = len(class_counts)
+        class_weight = {
+            i: n_train / (n_classes * count) if count > 0 else 0.0
+            for i, count in enumerate(class_counts)
+        }
+        mlflow.log_params({f"class_weight_{i}": w for i, w in class_weight.items()})
+
         history = model.fit(
             splits.train["M"], splits.train["y"],
             validation_data=(splits.val["M"], splits.val["y"]),
             epochs=params.epochs,
             batch_size=params.batch_size,
             callbacks=_build_callbacks(params, checkpoint_path, batch_checkpoint_path),
+            class_weight=class_weight,
         )
         _log_history(history.history)
 

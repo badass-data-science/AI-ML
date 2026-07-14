@@ -281,6 +281,69 @@ directional signal, not the same statistical weight as a full-scale study. Like
 `profit_take_pct`/`stop_loss_pct`/`max_holding_bars`, this hasn't been re-validated
 against the full production dataset.
 
+### Training instability: seed-dependent mode collapse (2026-07-13)
+
+A real full EUR/USD H1 training run scored 0.428 accuracy, clearing both
+baselines with a strong significance test. Re-running the *exact same*
+architecture/data with only `tensorflow_seed` changed collapsed to predicting
+"long" on 99% of rows and scored *below* the majority baseline. An audit of all
+33 training runs logged this session (free — no retraining needed, just reading
+already-logged MLflow artifacts) confirmed this is real and pervasive: ~39% of
+all runs collapsed to one dominant class, and only 2 of those 13 collapses
+traced to an already-understood NaN-divergence-and-recovery artifact — 11 more
+happened during completely normal, non-diverged training.
+
+Four architecture/regularization changes were tested via matched 5-seed
+rolling-CV comparisons (same 8,000-bar fold, same seeds, one variable changed
+at a time) to try to fix it:
+
+| Change | Mean accuracy | Mode-collapse rate | NaN-divergence rate | Verdict |
+|---|---|---|---|---|
+| (baseline: current architecture) | 0.378 | 2/5 (40%) | 1/5 (20%) | — |
+| Last LSTM layer `return_sequences=False` (see below) | 0.340 | 5/5 (100%) | 4/5 (80%) | **reverted** — made everything worse |
+| Remove softmax-output `activity_regularizer` bug (see below) | 0.355 | 2/5 (40%) | — | **kept** — correct fix, but no measurable effect |
+| `class_weight` (inverse-frequency balanced) | 0.331 | 1/5 (20%) | 2/5 (40%) | **kept as shipped default** — real trade-off, not a clean win |
+| Revert 10x drift in `l1_regularization_constant` (1e-4 → original 1e-5) | 0.318 | 5/5 (100%) | 5/5 (100%) | **rejected** — worst result of the four |
+
+Two real bugs were found and fixed along the way, independent of whether they
+turned out to explain the instability:
+
+- `build_lstm_regressor` had every LSTM layer, including the last, configured
+  with `return_sequences=True` — inherited verbatim from the original
+  `lstm.py` (confirmed via `git show 4186e46:...lstm.py`). Since the final
+  layer never collapsed to a single summary vector, `Flatten()` was flattening
+  the entire `(n_back=200, units=300)` sequence into a 60,000-scalar vector
+  before a 7-unit Dense layer, instead of the standard "last recurrent layer
+  returns only its final timestep" pattern. A well-reasoned hypothesis for the
+  instability — tested and empirically refuted (table above). The likely
+  explanation: that huge, redundant flatten may have been acting as an
+  accidental stabilizer (a large, forgiving optimization landscape with many
+  mediocre-but-not-degenerate solutions), and removing it concentrated the
+  network into something more prone to sharp, degenerate convergence.
+- The final output Dense layer (softmax) had `activity_regularizer=L2(...)` —
+  in Keras this penalizes a layer's own returned output, meaning it was
+  directly regularizing the model's output *probabilities* toward zero, not
+  its weights. This directly explains an earlier finding that the model never
+  assigned more than 50% confidence to anything in a real backtest. Fixed
+  (removed from the final layer only); had no measurable effect on the
+  collapse/confidence numbers above, but is simply the correct thing to do
+  regardless.
+
+None of the four changes resolved the underlying instability. A follow-up
+comparison against a gradient-boosted-tree model (`sklearn.ensemble.
+HistGradientBoostingClassifier`, since `xgboost`/`lightgbm` aren't installed)
+on the exact same engineered features (just the current bar, not the full
+200-step sequence) and the same bidirectional triple-barrier labels found the
+instability is specific to this LSTM architecture, not an absence of signal in
+the data: GBT was stable across every seed tried (accuracy 0.383–0.384, zero
+mode collapse), consistently beating both baselines. A promising cost-aware
+backtest result at one confidence threshold (win rate 0.528, net +2.27%, the
+first positive net P&L of the whole investigation) did not survive a proper
+significance check (p=0.092) or a 5-fold multi-window validation (pooled win
+rate never significantly exceeded 50% across any threshold) — so GBT's
+demonstrated advantage so far is stability, not a validated trading edge. Full
+narrative: `blog-posts/13-our-heroine-trades-her-thoroughbred-for-a-mule.md`.
+
 ## Running a single pair
 
 ```bash
