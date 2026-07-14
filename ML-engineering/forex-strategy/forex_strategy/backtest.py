@@ -123,7 +123,12 @@ def simulate_trades(
     `position_size` (default: all ones) scales both P&L and cost proportionally,
     so a 0.3-size position produces 30% of a full-size position's P&L AND 30% of
     its cost, not a discounted cost at full P&L -- see
-    `position_size_from_realized_volatility` for a volatility-gated source.
+    `position_size_from_realized_volatility` for a volatility-gated source. Must be
+    non-negative: it's a magnitude scaler, not a direction flip, and the long/short
+    side selection above is keyed off `positions`' own sign, not `positions *
+    position_size`'s -- a negative entry would silently price the row using the
+    wrong side's true outcome (the same class of bug this function's long_*/short_*
+    split exists to prevent), so it's rejected outright instead.
 
     `long_raw_return_pct`/`short_raw_return_pct` are forex-ML's
     `Splits.test["long_raw_return_pct"]`/`["short_raw_return_pct"]` (or the
@@ -144,6 +149,8 @@ def simulate_trades(
         position_size = np.ones(n)
     elif len(position_size) != n:
         raise ValueError("position_size must be the same length as positions")
+    elif np.any(position_size < 0):
+        raise ValueError("position_size must be non-negative")
 
     needs_timestamps = long_swap_cost_pct_per_night != 0.0 or short_swap_cost_pct_per_night != 0.0 \
         or flatten_before_rollover

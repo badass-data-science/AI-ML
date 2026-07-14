@@ -154,6 +154,20 @@ def test_simulate_trades_rejects_mismatched_position_size_length():
         )
 
 
+def test_simulate_trades_rejects_negative_position_size():
+    """position_size is a magnitude scaler, not a direction flip -- the long/short
+    side selection is keyed off `positions`' own sign, not `positions *
+    position_size`'s, so a negative entry would silently price a row using the
+    wrong side's true outcome. Rejected outright instead of allowed to corrupt
+    pricing quietly."""
+    with pytest.raises(ValueError, match="non-negative"):
+        simulate_trades(
+            np.array([1, -1]), np.array([0.1, 0.2]), np.array([0.1, 0.2]),
+            np.array([0.0002, 0.0002]), np.array([1.1, 1.1]),
+            position_size=np.array([1.0, -0.5]),
+        )
+
+
 def test_simulate_trades_charges_swap_only_when_a_rollover_is_crossed():
     positions = np.array([1, 1])
     pd_lead_pct = np.array([0.0, 0.0])  # isolate swap's effect, no directional P&L
