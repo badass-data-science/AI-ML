@@ -8,6 +8,74 @@ InfluxDB ──▶ prepare (feature engineering) ──▶ split (windows/normal
              forex_ml/data/features.py         forex_ml/data/splitting.py    forex_ml/training/
 ```
 
+## Status (2026-07-14): forecasting-edge search closed on EUR/USD, no validated edge found
+
+This project set out to answer one question: does this pipeline, applied to
+major-pair forex data, produce a model whose predictions clear real trading
+costs and hold up out of sample? After an extensive, well-instrumented search,
+the honest answer on EUR/USD is **no** — not "not yet," but no validated edge
+across everything tried, with a trustworthy measurement instrument confirming
+it at every step.
+
+**What was searched**, all against the same leak-proof, purge-gap-aware,
+cost-aware pipeline (bidirectional triple-barrier labeling, rolling-window
+out-of-sample validation, McNemar/multiple-comparisons-corrected significance
+testing throughout):
+
+- **2 model families**: an LSTM (which turned out to be seed-dependently
+  unstable — see "Training instability" below — for reasons never fully
+  resolved) and gradient-boosted trees (stable across every seed and pair
+  tried, the more trustworthy of the two).
+- **2 objectives**: 3-class direction classification, and net-return
+  regression (predicting the actual expected P&L rather than just direction).
+- **4 feature sets**: a 10-feature OHLCV/calendar/session baseline, plus three
+  rounds of enrichment (multi-timeframe trend + volatility regime, momentum
+  oscillator analogs, a cross-pair "USD strength" signal) — see "Richer
+  features" below.
+- **2 granularities**: H1 (the primary focus) and H4 (added specifically to
+  test whether a coarser timescale had a better signal-to-noise ratio — see
+  "Granularity comparison" below), plus lighter spot-checks on three more
+  pairs at H1 confirming the same instability/stability pattern generalizes
+  beyond EUR/USD.
+
+**Every single "promising" single-window backtest result found along the
+way — and there were several — failed to survive 5-fold, non-overlapping,
+out-of-sample validation.** The cost structure itself was checked directly
+against real data and found not to be the dominant obstacle (spread is only
+~5% of a typical barrier-sized move; the breakeven win rate is a modest
+~52.5%, not some unreachable bar). The actual limiting factor, confirmed
+repeatedly: fold-to-fold and seed-to-seed noise (win rates ranging over 25+
+percentage points depending on which window or seed happened to be tested)
+dwarfs the few-percentage-point edge that would be needed to be profitable.
+
+**The backtest itself was independently audited twice** before trusting any
+of this — once turning up a real bug (wrong-direction trades priced using the
+wrong side's outcome, fixed — see "Backtest fix" below), and once confirming
+no further issues. The measurement instrument is trustworthy; what it
+consistently measured is the absence of a validated edge in what was tried.
+
+**Scope of this negative result — what it does NOT claim:** this is not a
+claim that no exploitable edge exists in forex generally, or even in EUR/USD
+at every timescale and feature set. Real avenues remain untried: order-flow/
+L2 book data; genuine news/economic-calendar features (blocked so far by a
+Finnhub API tier limitation, not a code issue); real retail-positioning data
+(blocked by OANDA discontinuing the relevant endpoints); less liquid,
+less-arbitraged pairs or asset classes entirely; a directly cost-aware
+training objective rather than a proxy loss. This result closes out the
+specific, wide-but-bounded search described above, not the whole space of
+possible approaches.
+
+**What this project actually produced**, independent of whether it found a
+trading edge: a rigorous, reusable, leak-proof forex ML pipeline —
+bidirectional cost-aware triple-barrier labeling, purge-gap-aware
+train/val/test and rolling-window splitting, a full statistical-significance
+and multiple-comparisons-correction toolkit, and an audited cost-aware
+backtest engine (the sibling [`forex-strategy`](../forex-strategy)
+project — see its own README and blog series for a from-scratch explanation
+of how and why it works). That infrastructure is the real, portable asset
+this investigation leaves behind, and is exactly what the next phase (a
+different, less efficient market) would reuse rather than rebuild.
+
 ## Forward-fill contamination
 
 Gaps in the raw candle data get forward-filled (weekends, holidays, thin liquidity)
@@ -522,6 +590,53 @@ conclusions:
 | 0.45 | 0.503 | 0.489 | -37.54 | -42.25 |
 | 0.50 | 0.493 | 0.475 | -40.69 | -46.22 |
 | 0.55 | 0.509 | 0.489 | -11.76 | -16.75 |
+
+### Granularity comparison: EUR/USD at H4 (2026-07-14)
+
+With the backtest confirmed trustworthy, one more lever was tried before
+concluding the search: a coarser input granularity, on the theory that H1 might
+simply be too noisy a timescale relative to real trading costs. H4 wasn't
+available in this pipeline at all before this — added as a new collection
+granularity in the sibling `forex-etl` project (see that repo's README), which
+also surfaced and fixed an unrelated, real bug: `ForwardFillInator`'s
+gap-filling grid assumed a fixed number of UTC seconds between bars forever,
+which breaks for any granularity anchored to local time-of-day (H4, D) once
+DST shifts the real boundary by an hour — confirmed against real history (H4:
+~66% of rows misaligned before the fix, 0% after, across all 17 years on
+file) and fixed there.
+
+Daily granularity was considered first and rejected: only ~3,000 bars total
+for EUR/USD since 2015, far too few to run the same 5-fold, 10,000+-bar
+validation discipline used throughout this investigation without badly
+under-powering it — exactly the kind of tradeoff (bigger typical moves per
+bar vs. far fewer independent bars to prove it with) flagged when the
+granularity question first came up.
+
+H4 config was scaled directly off the production H1 config (every lookback,
+holding period, and barrier divided/multiplied by 4, so the comparison
+isolates "granularity of the input bars," not a different holding-period
+philosophy) rather than independently re-validated via ACF/PACF the way
+n_back=200 was for H1. Same GBT methodology as EUR/USD H1 (full-window
+features, classification and net_return_pct regression), including the same
+three-round feature-richness progression (multi-timeframe/volatility-regime,
+momentum, cross-pair):
+
+| | Classification net P&L (best threshold) | Regression net P&L (best threshold) |
+|---|---|---|
+| Baseline (10 feat) | -0.42% (conf 0.50, win 0.497, n=197) | -6.63% (thr 0.30, win 0.486) |
+| +multi-timeframe/vol-regime | -4.92% (conf 0.45, win 0.500, n=532) | -48.64% (thr 0.00, win 0.465) |
+| +momentum | -6.54% (conf 0.40, win 0.506, n=814) | -12.96% (thr 0.30, win 0.458) |
+| +cross-pair | +0.05% (conf 0.45, win 0.507, n=534) | -10.90% (thr 0.30, win 0.469) |
+
+Regression got uniformly worse with richer features at every round, mirroring
+H1. Classification is noisy round to round with no clean trend; the one
+near-zero positive number (+0.05%, essentially exactly breakeven) is far
+weaker evidence than the H1 cross-pair result that already failed 5-fold
+validation (that one had win rate clearing 50% by several points at three
+separate thresholds, not a fraction of a percentage point at one) — not worth
+the compute of a multi-window check on a signal this marginal, on a test set
+(2,651 rows) already a quarter the size of H1's. Verdict: the coarser-timescale
+hypothesis doesn't fare any better than H1 did.
 
 ## Running a single pair
 
