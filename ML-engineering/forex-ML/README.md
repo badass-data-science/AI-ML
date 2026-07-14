@@ -344,6 +344,72 @@ rate never significantly exceeded 50% across any threshold) — so GBT's
 demonstrated advantage so far is stability, not a validated trading edge. Full
 narrative: `blog-posts/13-our-heroine-trades-her-thoroughbred-for-a-mule.md`.
 
+### Chasing a trading edge: features, pairs, and a regression target (2026-07-14)
+
+Three follow-up questions from the mode-collapse investigation above, taken in
+turn:
+
+**Does a shorter memory fix the LSTM's instability?** `n_back` was cut from 200
+to 50 (same architecture, same everything else). NaN divergence disappeared
+entirely (0% vs. 20% of seeds), but mode collapse got *worse* (100% vs. 40% of
+seeds) and mean accuracy dropped well below the (also-shifted, smaller-window)
+majority baseline. Rejected — trades one failure mode for a worse one, not a fix.
+
+**Does GBT's stability and full-window-feature advantage generalize beyond
+EUR/USD?** Surveyed GBP/USD, USD/JPY, and AUD/USD at H1, 3 seeds each, both
+feature variants (current-bar-only vs. the full flattened `n_back`-length
+window). Findings held up across every pair: GBT was stable everywhere (no
+mode collapse, low seed-to-seed variance), the full-window feature variant
+beat current-bar-only on every single pair tested, and a spot-check of the
+LSTM on these same new pairs reproduced its instability there too (divergence
+on the new pairs' runs). Conclusion: both the LSTM's fragility and GBT's
+stability are properties of the architecture/model class, not something
+peculiar to EUR/USD — and GBT should always use full-window features going
+forward, not current-bar-only.
+
+**Would predicting the actual expected return, instead of a 3-class
+short/flat/long label, produce a better-aligned trading signal?** Motivation:
+classification optimizes for getting the direction right, not for the
+magnitude of money made or lost, which is a mismatch with the actual goal.
+Regressing `net_return_pct` (the cost-adjusted, triple-barrier-bounded realized
+return — bounded, unlike raw return, which risks the model collapsing to
+predicting the unconditional mean under low signal-to-noise, a regression
+flavor of the classifier's mode-collapse problem) with GBT (full-window
+features) and trading only when the predicted return exceeded a threshold
+produced an eye-catching single-window result: at threshold=0.30, win rate
+0.526, net **+20.32%**, p=0.018 (n=1,621 trades) — the best single number the
+whole investigation had produced.
+
+It did not survive being asked twice. The same 5-fold multi-window validation
+used to debunk the classifier's confidence-filtering result was run against
+this regression approach, same fold sizing (10,000/2,000/2,000 bars, sliding):
+
+| threshold | total trades | pooled win rate | p-value | total net P&L | per-fold win rates |
+|---|---|---|---|---|---|
+| 0.00 | 6,495 | 0.488 | 0.974 | -1.82% | 0.556, 0.413, 0.502, 0.475, 0.495 |
+| 0.05 | 6,487 | 0.488 | 0.978 | -3.35% | 0.556, 0.412, 0.502, 0.474, 0.495 |
+| 0.10 | 6,448 | 0.488 | 0.973 | -3.20% | 0.555, 0.413, 0.502, 0.474, 0.496 |
+| 0.15 | 6,252 | 0.487 | 0.982 | -12.96% | 0.551, 0.413, 0.505, 0.470, 0.498 |
+| 0.20 | 5,567 | 0.485 | 0.989 | -37.55% | 0.559, 0.401, 0.503, 0.468, 0.492 |
+| 0.30 | 1,381 | 0.498 | 0.564 | -30.48% | 0.586, 0.331, 0.482, 0.458, 0.465 |
+
+The specific window that produced the promising result is fold 0 in this
+table (win rate 0.556–0.586 across thresholds) — genuinely good, but offset by
+a genuinely bad fold (fold 1: 0.331–0.413) and three folds hovering near a
+coin flip. Pooled, no threshold clears 50% with any significance, and net P&L
+is negative at every threshold except the trivial (still slightly negative)
+threshold=0. Same verdict as the classifier's confidence-filtering result:
+one favorable window, not a validated edge.
+
+**Where this leaves the model-selection question**: GBT remains the more
+trustworthy model class (stable, generalizes across pairs, always beats
+baselines on the classification task) — but neither approach tried so far for
+turning that into a trading signal (confidence-filtered classification,
+return-threshold regression) has produced an edge that survives multi-window
+validation. The open problem is no longer "is the model unstable" — it's
+solved. It's "does this feature set, at this granularity, contain a
+profitable edge at all," which remains unanswered.
+
 ## Running a single pair
 
 ```bash
