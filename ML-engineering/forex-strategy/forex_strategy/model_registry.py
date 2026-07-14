@@ -88,8 +88,9 @@ def load_keras_model(resolved: ResolvedModel):
 def load_test_predictions(client: MlflowClient, run_id: str, download_dir: str) -> dict[str, np.ndarray]:
     """Download and load the `<run_uid>_predictions.npz` artifact forex_ml.training.train
     logs for this run: lstm_pred_proba/test_timestamp/test_price/test_spread/
-    test_y_raw/test_exit_bar_offset/test_realized_volatility/lstm_correct/
-    majority_correct/persistence_correct."""
+    test_y_raw/test_exit_bar_offset/test_realized_volatility/test_long_raw_return_pct/
+    test_long_exit_bar_offset/test_short_raw_return_pct/test_short_exit_bar_offset/
+    lstm_correct/majority_correct/persistence_correct."""
     artifact_path = next(a.path for a in client.list_artifacts(run_id) if a.path.endswith("_predictions.npz"))
     local_path = client.download_artifacts(run_id, artifact_path, download_dir)
     return dict(np.load(local_path))

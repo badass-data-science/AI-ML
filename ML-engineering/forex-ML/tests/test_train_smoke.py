@@ -35,6 +35,10 @@ def _make_splits(n_back: int = 10, n_features: int = 3, n_classes: int = 3) -> S
     test["y_raw"] = rng.normal(size=n_test).astype("float64")
     test["exit_bar_offset"] = rng.integers(1, 4, size=n_test)
     test["realized_volatility"] = rng.uniform(0.0005, 0.005, size=n_test)
+    test["long_raw_return_pct"] = rng.normal(size=n_test).astype("float64")
+    test["long_exit_bar_offset"] = rng.integers(1, 4, size=n_test)
+    test["short_raw_return_pct"] = rng.normal(size=n_test).astype("float64")
+    test["short_exit_bar_offset"] = rng.integers(1, 4, size=n_test)
 
     return Splits(train=_one(40), val=_one(10), test=test)
 
@@ -127,6 +131,10 @@ def test_train_and_evaluate_logs_params_metrics_and_model(tmp_path):
     np.testing.assert_array_equal(predictions["test_spread"], splits.test["spread"])
     np.testing.assert_array_equal(predictions["test_exit_bar_offset"], splits.test["exit_bar_offset"])
     np.testing.assert_array_equal(predictions["test_realized_volatility"], splits.test["realized_volatility"])
+    np.testing.assert_array_equal(predictions["test_long_raw_return_pct"], splits.test["long_raw_return_pct"])
+    np.testing.assert_array_equal(predictions["test_long_exit_bar_offset"], splits.test["long_exit_bar_offset"])
+    np.testing.assert_array_equal(predictions["test_short_raw_return_pct"], splits.test["short_raw_return_pct"])
+    np.testing.assert_array_equal(predictions["test_short_exit_bar_offset"], splits.test["short_exit_bar_offset"])
 
 
 def test_log_model_after_nan_metric_does_not_crash(tmp_path):

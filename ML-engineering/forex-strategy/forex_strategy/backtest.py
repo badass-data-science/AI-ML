@@ -73,54 +73,72 @@ def position_size_from_realized_volatility(
 
 def simulate_trades(
     positions: np.ndarray,
-    raw_return_pct: np.ndarray,
+    long_raw_return_pct: np.ndarray,
+    short_raw_return_pct: np.ndarray,
     spread: np.ndarray,
     price: np.ndarray,
     *,
     position_size: np.ndarray | None = None,
     entry_timestamp: np.ndarray | None = None,
-    exit_timestamp: np.ndarray | None = None,
+    long_exit_timestamp: np.ndarray | None = None,
+    short_exit_timestamp: np.ndarray | None = None,
     long_swap_cost_pct_per_night: float = 0.0,
     short_swap_cost_pct_per_night: float = 0.0,
     flatten_before_rollover: bool = False,
 ) -> BacktestResult:
     """Spread is charged as the full round-trip cost -- buying at ask and later
     selling at bid (or the reverse, for a short) costs one full spread-width
-    relative to the mid price `raw_return_pct` is measured from. The entry bar's
-    spread stands in for both legs since the exit bar's spread isn't available here
+    relative to the mid price returns are measured from. The entry bar's spread
+    stands in for both legs since the exit bar's spread isn't available here
     (forex-ML computes `spread_close_lead` in Stage 1 but doesn't currently plumb
     it through Splits).
 
+    `long_raw_return_pct`/`short_raw_return_pct` (and, if swap cost or
+    flatten_before_rollover is used, `long_exit_timestamp`/`short_exit_timestamp`)
+    are EACH SIDE'S OWN outcome -- see forex_ml.data.triple_barrier.
+    TripleBarrierLabels' long_*/short_* fields -- not a single merged "whichever
+    side the label was" value. This function selects the side matching each row's
+    OWN `positions` sign (long_* for positions > 0, short_* otherwise) before
+    computing P&L/cost, so a wrong-direction prediction (positions disagrees with
+    what actually won) is priced using the TRUE outcome of the side actually taken,
+    not the winning side's outcome as a stand-in. Passing the same array for both
+    (e.g. a single merged raw_return_pct) silently reproduces the old, mispricing
+    behavior -- pass each side's real value.
+
     Swap/rollover, if either swap-cost param is nonzero, is charged once per 5pm
-    New York rollover boundary actually crossed between `entry_timestamp` and
-    `exit_timestamp` (via forex-ML's `count_rollovers_crossed` -- DST-aware, not a
-    fixed-UTC approximation), not once per bar held -- an intraday hold usually
-    crosses zero rollovers. Direction matters: a long position is charged
-    `long_swap_cost_pct_per_night`, a short position `short_swap_cost_pct_per_night`
-    -- these are genuinely different, independently-signed real-world rates (see
-    forex_ml.data.swap_rates), not one rate mirrored with a flip, so passing the
-    same value for both would silently misprice one side. `flatten_before_rollover=True`
-    implements the "flatten by 5pm" rule instead of paying swap: any row whose
-    holding period would cross a rollover is forced flat (skipped) rather than held
-    through it and charged -- both swap-cost params and `flatten_before_rollover`
-    require `entry_timestamp`/`exit_timestamp`.
+    New York rollover boundary actually crossed between `entry_timestamp` and the
+    row's own side's exit timestamp (via forex-ML's `count_rollovers_crossed` --
+    DST-aware, not a fixed-UTC approximation), not once per bar held -- an
+    intraday hold usually crosses zero rollovers. Direction matters: a long
+    position is charged `long_swap_cost_pct_per_night`, a short position
+    `short_swap_cost_pct_per_night` -- these are genuinely different,
+    independently-signed real-world rates (see forex_ml.data.swap_rates), not one
+    rate mirrored with a flip, so passing the same value for both would silently
+    misprice one side. `flatten_before_rollover=True` implements the "flatten by
+    5pm" rule instead of paying swap: any row whose holding period would cross a
+    rollover is forced flat (skipped) rather than held through it and charged --
+    both swap-cost params and `flatten_before_rollover` require
+    `entry_timestamp`/`long_exit_timestamp`/`short_exit_timestamp`.
 
     `position_size` (default: all ones) scales both P&L and cost proportionally,
     so a 0.3-size position produces 30% of a full-size position's P&L AND 30% of
     its cost, not a discounted cost at full P&L -- see
     `position_size_from_realized_volatility` for a volatility-gated source.
 
-    `raw_return_pct` is forex-ML's `Splits.test["y_raw"]` / the predictions
-    artifact's `test_y_raw` -- triple-barrier's `raw_return_pct`, the *pre-cost*
-    realized % move at the row's actual exit bar (100 * (exit_price - entry_price) /
-    entry_price). Deliberately not `net_return_pct` (already net of spread/swap),
-    which would double-count cost against the spread/swap this function charges
-    itself. `spread`/`price` are the raw (non-percentage) price-unit values from
-    `Splits.test`.
+    `long_raw_return_pct`/`short_raw_return_pct` are forex-ML's
+    `Splits.test["long_raw_return_pct"]`/`["short_raw_return_pct"]` (or the
+    predictions artifact's `test_long_raw_return_pct`/`test_short_raw_return_pct`)
+    -- triple-barrier's per-side *pre-cost* realized % move at that side's own
+    actual exit bar. Deliberately not `net_return_pct` (already net of spread/
+    swap), which would double-count cost against the spread/swap this function
+    charges itself. `spread`/`price` are the raw (non-percentage) price-unit
+    values from `Splits.test`.
     """
     n = len(positions)
-    if not (len(raw_return_pct) == len(spread) == len(price) == n):
-        raise ValueError("positions/raw_return_pct/spread/price must all be the same length")
+    if not (len(long_raw_return_pct) == len(short_raw_return_pct) == len(spread) == len(price) == n):
+        raise ValueError(
+            "positions/long_raw_return_pct/short_raw_return_pct/spread/price must all be the same length"
+        )
 
     if position_size is None:
         position_size = np.ones(n)
@@ -129,15 +147,21 @@ def simulate_trades(
 
     needs_timestamps = long_swap_cost_pct_per_night != 0.0 or short_swap_cost_pct_per_night != 0.0 \
         or flatten_before_rollover
-    if needs_timestamps and (entry_timestamp is None or exit_timestamp is None):
+    if needs_timestamps and (entry_timestamp is None or long_exit_timestamp is None or short_exit_timestamp is None):
         raise ValueError(
-            "entry_timestamp and exit_timestamp are required when long_swap_cost_pct_per_night or "
-            "short_swap_cost_pct_per_night is set or flatten_before_rollover is True"
+            "entry_timestamp, long_exit_timestamp, and short_exit_timestamp are required when "
+            "long_swap_cost_pct_per_night or short_swap_cost_pct_per_night is set or "
+            "flatten_before_rollover is True"
         )
-    if needs_timestamps and not (len(entry_timestamp) == len(exit_timestamp) == n):  # type: ignore[arg-type]
-        raise ValueError("entry_timestamp/exit_timestamp must be the same length as positions")
+    if needs_timestamps and not (
+        len(entry_timestamp) == len(long_exit_timestamp) == len(short_exit_timestamp) == n  # type: ignore[arg-type]
+    ):
+        raise ValueError("entry_timestamp/long_exit_timestamp/short_exit_timestamp must be the same length as positions")
+
+    raw_return_pct = np.where(positions > 0, long_raw_return_pct, short_raw_return_pct)
 
     if needs_timestamps:
+        exit_timestamp = np.where(positions > 0, long_exit_timestamp, short_exit_timestamp)  # type: ignore[arg-type]
         n_rollovers = np.array([
             count_rollovers_crossed(e, x) for e, x in zip(entry_timestamp, exit_timestamp)  # type: ignore[arg-type]
         ])

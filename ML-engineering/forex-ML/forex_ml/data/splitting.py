@@ -117,16 +117,23 @@ class Splits:
         so loading it can't execute arbitrary code, and per-pair files stay small
         instead of one shared, unversioned 684MB pickle.
 
-        `test` carries six extra keys (timestamp/price/spread/y_raw/exit_bar_offset/
-        realized_volatility) that train/val don't -- a backtest only ever needs to
-        reconstruct P&L on the held-out test set, so train/val stay exactly
-        {"M", "y"} rather than carrying reference data nothing reads.
+        `test` carries ten extra keys (timestamp/price/spread/y_raw/exit_bar_offset/
+        realized_volatility/long_raw_return_pct/long_exit_bar_offset/
+        short_raw_return_pct/short_exit_bar_offset) that train/val don't -- a
+        backtest only ever needs to reconstruct P&L on the held-out test set, so
+        train/val stay exactly {"M", "y"} rather than carrying reference data
+        nothing reads.
         `exit_bar_offset` (how many bars the triple-barrier label actually took to
         resolve) lets a backtest compute a real, variable holding period instead of
         assuming a fixed one. `realized_volatility` (a fixed-window backward-looking
         reference, see COLUMNS_PASSTHROUGH) lets a backtest scale position size down
         as recent realized volatility rises, without needing a second, forward-
-        looking volatility model.
+        looking volatility model. `long_raw_return_pct`/`long_exit_bar_offset` and
+        `short_raw_return_pct`/`short_exit_bar_offset` (see
+        forex_ml.data.triple_barrier.TripleBarrierLabels) are each side's OWN true
+        race outcome, independent of which side the label actually was -- a
+        backtest needs these to correctly price a trade taken in EITHER direction,
+        not just whichever direction the label happened to confirm.
         """
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(
@@ -139,6 +146,10 @@ class Splits:
             test_timestamp=self.test["timestamp"], test_price=self.test["price"], test_spread=self.test["spread"],
             test_y_raw=self.test["y_raw"], test_exit_bar_offset=self.test["exit_bar_offset"],
             test_realized_volatility=self.test["realized_volatility"],
+            test_long_raw_return_pct=self.test["long_raw_return_pct"],
+            test_long_exit_bar_offset=self.test["long_exit_bar_offset"],
+            test_short_raw_return_pct=self.test["short_raw_return_pct"],
+            test_short_exit_bar_offset=self.test["short_exit_bar_offset"],
         )
 
     @classmethod
@@ -152,6 +163,10 @@ class Splits:
                 "timestamp": data["test_timestamp"], "price": data["test_price"], "spread": data["test_spread"],
                 "y_raw": data["test_y_raw"], "exit_bar_offset": data["test_exit_bar_offset"],
                 "realized_volatility": data["test_realized_volatility"],
+                "long_raw_return_pct": data["test_long_raw_return_pct"],
+                "long_exit_bar_offset": data["test_long_exit_bar_offset"],
+                "short_raw_return_pct": data["test_short_raw_return_pct"],
+                "short_exit_bar_offset": data["test_short_exit_bar_offset"],
             },
             # Pre-migration .npz files (written before swap rates, or before the
             # long/short split, were wired in) don't have these keys -- each
@@ -416,6 +431,18 @@ class TimeSeriesSplitter:
                 # recent realized volatility rises, without needing a second,
                 # forward-looking volatility model.
                 "realized_volatility": df_test["realized_volatility"].to_numpy(),
+                # Each side's OWN true race outcome (see
+                # forex_ml.data.triple_barrier.TripleBarrierLabels), independent of
+                # which side the label actually was -- "y_raw"/"exit_bar_offset"
+                # above only reflect whichever side won. A backtest evaluating a
+                # model's prediction that DISAGREES with the label needs these to
+                # price that trade correctly; substituting the winning side's y_raw
+                # instead (as forex_strategy.backtest.simulate_trades used to do)
+                # mispriced every wrong-direction trade.
+                "long_raw_return_pct": df_test["long_raw_return_pct"].to_numpy(),
+                "long_exit_bar_offset": df_test["long_exit_bar_offset"].to_numpy(),
+                "short_raw_return_pct": df_test["short_raw_return_pct"].to_numpy(),
+                "short_exit_bar_offset": df_test["short_exit_bar_offset"].to_numpy(),
             },
             long_swap_cost_pct_per_night=self.long_swap_cost_pct_per_night,
             short_swap_cost_pct_per_night=self.short_swap_cost_pct_per_night,

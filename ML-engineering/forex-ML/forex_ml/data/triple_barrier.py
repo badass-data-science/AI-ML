@@ -50,6 +50,16 @@ reference whichever race resolved first (tie -> long) -- the more truthful singl
 reference, since `forex_strategy.run_backtest` derives rollover-crossing counts
 directly from exit_bar_offset for every test row.
 
+Both races' own outcomes are ALSO persisted independently (long_exit_bar_offset/
+long_raw_return_pct, short_exit_bar_offset/short_raw_return_pct -- see
+TripleBarrierLabels), not just the merged single winning-side view above. This
+matters for backtesting: a model's prediction can disagree with the label (that's
+what "wrong" means), and a backtest evaluating that wrong-direction trade needs the
+true outcome of the side actually taken, not the winning side's outcome as a
+stand-in -- which is what `forex_strategy.backtest.simulate_trades` did before
+these fields existed, mispricing every wrong-direction trade (see git history/
+README for the specific fix and how large the effect was measured to be).
+
 This IS the production training target -- `TimeSeriesSplitter`
 (forex_ml/data/splitting.py) calls `triple_barrier_labels_from_frame` once per pair
 in `__init__`, before any train/val/test splitting happens. `pd_lead`/
@@ -101,6 +111,21 @@ class TripleBarrierLabels:
     raw_return_pct: np.ndarray   # realized % return at that same exit bar, BEFORE cost -- what a
                                  # downstream backtest (which charges its own cost) should use as
                                  # "the move," rather than net_return_pct which would double-count it
+    # long_*/short_* below are EACH SIDE'S OWN outcome, always both present regardless
+    # of which side won -- unlike exit_bar_offset/raw_return_pct above, which only
+    # reflect whichever race won (or resolved first, if flat). A downstream backtest
+    # evaluating a model's prediction needs the outcome of the side actually taken,
+    # not just whichever side the label happened to be. When a model predicts the
+    # SAME direction as the label, long_raw_return_pct (or short_) exactly equals
+    # raw_return_pct above; when it predicts the OPPOSITE direction, these are the
+    # only correct source for that trade's true P&L -- substituting the winning
+    # side's raw_return_pct instead (as forex_strategy.backtest.simulate_trades used
+    # to do, before these fields existed) mispriced every wrong-direction trade,
+    # roughly half of all trades in a near-50%-win-rate backtest.
+    long_exit_bar_offset: np.ndarray
+    long_raw_return_pct: np.ndarray
+    short_exit_bar_offset: np.ndarray
+    short_raw_return_pct: np.ndarray
 
 
 def _run_single_side_race(
@@ -173,6 +198,10 @@ def triple_barrier_labels(
     exit_bar_offset = np.full(n_labelable, max_holding_bars, dtype=int)
     net_return_pct = np.zeros(n_labelable, dtype=float)
     raw_return_pct_out = np.zeros(n_labelable, dtype=float)
+    long_exit_bar_offset = np.full(n_labelable, max_holding_bars, dtype=int)
+    long_raw_return_pct = np.zeros(n_labelable, dtype=float)
+    short_exit_bar_offset = np.full(n_labelable, max_holding_bars, dtype=int)
+    short_raw_return_pct = np.zeros(n_labelable, dtype=float)
 
     for i in range(n_labelable):
         entry_price = price[i]
@@ -189,6 +218,9 @@ def triple_barrier_labels(
             profit_take_pct, stop_loss_pct, max_holding_bars,
             short_swap_cost_pct_per_night, sign=-1.0,
         )
+
+        long_exit_bar_offset[i], long_raw_return_pct[i] = long_j, long_raw
+        short_exit_bar_offset[i], short_raw_return_pct[i] = short_j, short_raw
 
         long_wins = long_hit == 1
         short_wins = short_hit == 1
@@ -211,6 +243,8 @@ def triple_barrier_labels(
     return TripleBarrierLabels(
         label=label, exit_bar_offset=exit_bar_offset,
         net_return_pct=net_return_pct, raw_return_pct=raw_return_pct_out,
+        long_exit_bar_offset=long_exit_bar_offset, long_raw_return_pct=long_raw_return_pct,
+        short_exit_bar_offset=short_exit_bar_offset, short_raw_return_pct=short_raw_return_pct,
     )
 
 
@@ -230,7 +264,9 @@ def triple_barrier_labels_from_frame(
     `df_non_time_series` Parquet output, which carries mid_close/spread_close as
     passthrough reference columns; see COLUMNS_PASSTHROUGH in features.py).
     Returns `df`'s first `len(df) - max_holding_bars` rows with label/
-    exit_bar_offset/net_return_pct/raw_return_pct columns appended."""
+    exit_bar_offset/net_return_pct/raw_return_pct/long_exit_bar_offset/
+    long_raw_return_pct/short_exit_bar_offset/short_raw_return_pct columns
+    appended (see TripleBarrierLabels for what the long_*/short_* columns are)."""
     result = triple_barrier_labels(
         df[price_column].to_numpy(),
         df[spread_column].to_numpy(),
@@ -244,4 +280,8 @@ def triple_barrier_labels_from_frame(
     out["exit_bar_offset"] = result.exit_bar_offset
     out["net_return_pct"] = result.net_return_pct
     out["raw_return_pct"] = result.raw_return_pct
+    out["long_exit_bar_offset"] = result.long_exit_bar_offset
+    out["long_raw_return_pct"] = result.long_raw_return_pct
+    out["short_exit_bar_offset"] = result.short_exit_bar_offset
+    out["short_raw_return_pct"] = result.short_raw_return_pct
     return out

@@ -315,7 +315,11 @@ def train_and_evaluate(
         # what price, at what spread cost, what was the actual realized outcome, how
         # long did the trade actually take to resolve, and how volatile was the
         # market recently" per row, which a correct/incorrect boolean alone can't
-        # answer.
+        # answer. Also saved: long_raw_return_pct/long_exit_bar_offset/
+        # short_raw_return_pct/short_exit_bar_offset -- each side's OWN true race
+        # outcome (see forex_ml.data.triple_barrier.TripleBarrierLabels), which a
+        # backtest needs to correctly price a prediction that DISAGREES with the
+        # label (y_raw/exit_bar_offset above only reflect whichever side won).
         lstm_pred_proba = model.predict(splits.test["M"], verbose=0)
         lstm_pred_idx = np.argmax(lstm_pred_proba, axis=1)
         lstm_true_idx = np.argmax(splits.test["y"], axis=1)
@@ -333,6 +337,10 @@ def train_and_evaluate(
             test_y_raw=splits.test["y_raw"],
             test_exit_bar_offset=splits.test["exit_bar_offset"],
             test_realized_volatility=splits.test["realized_volatility"],
+            test_long_raw_return_pct=splits.test["long_raw_return_pct"],
+            test_long_exit_bar_offset=splits.test["long_exit_bar_offset"],
+            test_short_raw_return_pct=splits.test["short_raw_return_pct"],
+            test_short_exit_bar_offset=splits.test["short_exit_bar_offset"],
         )
         mlflow.log_artifact(str(predictions_path))
 

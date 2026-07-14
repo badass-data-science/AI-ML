@@ -101,6 +101,10 @@ def test_npz_round_trip(tmp_path):
     np.testing.assert_array_equal(splits.test["y_raw"], loaded.test["y_raw"])
     np.testing.assert_array_equal(splits.test["exit_bar_offset"], loaded.test["exit_bar_offset"])
     np.testing.assert_array_equal(splits.test["realized_volatility"], loaded.test["realized_volatility"])
+    np.testing.assert_array_equal(splits.test["long_raw_return_pct"], loaded.test["long_raw_return_pct"])
+    np.testing.assert_array_equal(splits.test["long_exit_bar_offset"], loaded.test["long_exit_bar_offset"])
+    np.testing.assert_array_equal(splits.test["short_raw_return_pct"], loaded.test["short_raw_return_pct"])
+    np.testing.assert_array_equal(splits.test["short_exit_bar_offset"], loaded.test["short_exit_bar_offset"])
     assert loaded.long_swap_cost_pct_per_night == splits.long_swap_cost_pct_per_night
     assert loaded.short_swap_cost_pct_per_night == splits.short_swap_cost_pct_per_night
 
@@ -160,6 +164,25 @@ def test_test_split_exit_bar_offset_matches_the_labeled_frame():
     np.testing.assert_array_equal(splits.test["exit_bar_offset"], expected)
     assert (splits.test["exit_bar_offset"] >= 1).all()
     assert (splits.test["exit_bar_offset"] <= MAX_HOLDING_BARS).all()
+
+
+def test_test_split_long_and_short_raw_return_pct_match_the_labeled_frame():
+    """The point of this fix: a backtest needs each side's OWN true race outcome,
+    not just whichever side the label happened to be -- these must survive the
+    split step exactly as triple_barrier_labels_from_frame computed them."""
+    splitter = _splitter(100)
+    splits = splitter.split_train_val_test_by_proportion([0.7, 0.15])
+
+    lookup_df = splitter.df.set_index("unix_epoch_s")
+    for column in ("long_raw_return_pct", "long_exit_bar_offset", "short_raw_return_pct", "short_exit_bar_offset"):
+        expected = lookup_df[column].loc[splits.test["timestamp"]].to_numpy()
+        np.testing.assert_array_equal(splits.test[column], expected)
+
+    # not every row's long/short race need agree with each other or with the
+    # label's own merged view -- just confirm both sides are genuinely present
+    # and internally consistent, not silently duplicating y_raw/exit_bar_offset
+    assert (splits.test["long_exit_bar_offset"] >= 1).all()
+    assert (splits.test["short_exit_bar_offset"] >= 1).all()
 
 
 def test_test_split_realized_volatility_matches_the_labeled_frame():

@@ -476,6 +476,53 @@ encouraging direction found so far (worth revisiting, e.g. with a longer cross-p
 lookback/smoothing rather than a same-bar snapshot) — but "richer features" as a
 category hasn't cracked profitability at this pair/granularity yet.
 
+### Backtest fix: pricing a trade by the side actually taken (2026-07-14)
+
+A double-check of `forex_strategy.backtest.simulate_trades` (prompted by an
+attempt to explain why every backtest's `cost_pct` so heavily outweighed
+`gross_pnl_pct`) turned up a real, previously-unflagged imprecision: `triple_
+barrier.py` runs two independent races per row (long and short) but used to
+persist only ONE side's outcome — whichever won, or resolved first if flat
+(`exit_bar_offset`/`raw_return_pct`). When a model's prediction *disagreed* with
+the label — roughly half of every trade in a near-50%-win-rate backtest — the
+backtest had no choice but to price that trade using the *other* side's real
+outcome as a stand-in, not the true result of the position actually taken.
+
+Quantified directly against real EUR/USD H1 data (14,393 rows, both races
+recomputed) before fixing anything: the worst case — both sides genuinely
+winning, so the discarded side's real profit gets thrown away entirely — never
+occurred (0/14,393). The typical mispricing on a wrong-direction trade was small
+(mean |gap| ≈ 0.027–0.028 percentage points, median exactly 0, since the two
+races usually resolve at the same bar under symmetric profit-take/stop-loss
+thresholds), with a real but modest tail. Not large enough to explain the
+session's wide win-rate swings, but a genuine, fixable gap.
+
+**Fix**: `TripleBarrierLabels` (and `Splits.test`/the predictions.npz artifact)
+now persist each side's own true outcome independently —
+`long_raw_return_pct`/`long_exit_bar_offset` and
+`short_raw_return_pct`/`short_exit_bar_offset` — alongside the existing merged
+single-winner view (`raw_return_pct`/`exit_bar_offset`, still used for the
+regression target and persistence baseline, which legitimately want "the
+resolved outcome," not a per-direction split). `simulate_trades` now takes
+`long_raw_return_pct`/`short_raw_return_pct` (and
+`long_exit_timestamp`/`short_exit_timestamp` for swap/rollover accounting)
+instead of a single array, and selects the side matching each row's own
+predicted position before computing P&L — so a wrong-direction trade is priced
+by what would truly have happened, not a substitute.
+
+Re-running the corrected backtest against the same model/features used for the
+cross-pair result above showed the expected small, real shift — not a dramatic
+reversal, confirming the fix matters without overturning this session's
+conclusions:
+
+| min_confidence | win_rate (before fix) | win_rate (after fix) | net_pnl_pct (before) | net_pnl_pct (after) |
+|---|---|---|---|---|
+| 0.00 | 0.495 | 0.482 | -69.54 | -69.15 |
+| 0.40 | 0.502 | 0.489 | -43.18 | -45.50 |
+| 0.45 | 0.503 | 0.489 | -37.54 | -42.25 |
+| 0.50 | 0.493 | 0.475 | -40.69 | -46.22 |
+| 0.55 | 0.509 | 0.489 | -11.76 | -16.75 |
+
 ## Running a single pair
 
 ```bash
@@ -615,6 +662,14 @@ confident the model was, at what price and spread cost, what actually happened
 took to resolve, and how volatile the market recently was (for position sizing),
 to compute actual P&L, not just accuracy.
 
+Also carried: `test_long_raw_return_pct`/`test_long_exit_bar_offset` and
+`test_short_raw_return_pct`/`test_short_exit_bar_offset` — each side's OWN true
+triple-barrier race outcome (see "Backtest fix" above and
+`forex_ml.data.triple_barrier.TripleBarrierLabels`), independent of which side the
+label actually was. `test_y_raw`/`test_exit_bar_offset` only reflect whichever side
+won; a backtest needs the long/short-specific fields to correctly price a
+prediction that disagrees with the label.
+
 Every run also logs `column_y` as a param — always `"triple_barrier"` for real
 training runs now, kept as an explicit logged value (not hardcoded away) so a
 downstream consumer can still confirm what `y_raw`/`test_y_raw` is before treating
@@ -639,6 +694,13 @@ replacing the old approach of training a second model to predict a
 `volatility_lead` ordinal class. Only the **test** split carries any of this
 (`train`/`val` stay exactly `{"M", "y"}`) since backtesting only ever needs to
 reconstruct P&L on the held-out set.
+
+`long_raw_return_pct`/`long_exit_bar_offset` and
+`short_raw_return_pct`/`short_exit_bar_offset` are also on `Splits.test`, straight
+from `TripleBarrierLabels` — each side's own true race outcome, needed so
+`forex_strategy.backtest.simulate_trades` can price a trade in either direction
+correctly rather than substituting the winning side's outcome for a
+wrong-direction prediction (see "Backtest fix" above).
 
 ## Diagnostics
 
@@ -889,6 +951,11 @@ own swap-cost input — see "The prediction target: triple-barrier labeling" abo
 for the merge/tie-break rules, and `triple_barrier.py`'s module docstring for the
 full detail (including why a same-bar double-fire needs an explicit tie-break
 rather than being assumed impossible, and why `spread` must be non-negative).
+Both races' own outcomes are returned, not just the merged winner: `labeled`
+carries `long_exit_bar_offset`/`long_raw_return_pct` and
+`short_exit_bar_offset`/`short_raw_return_pct` alongside the single-winner
+`exit_bar_offset`/`raw_return_pct` — see "Backtest fix" above for why a backtest
+needs both.
 
 ## Tests
 

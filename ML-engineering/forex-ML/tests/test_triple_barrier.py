@@ -81,6 +81,38 @@ def test_triple_barrier_labels_hits_short_profit_take():
     assert result.raw_return_pct[0] == pytest.approx(-1.5)
 
 
+def test_long_and_short_raw_return_pct_are_both_persisted_even_when_they_disagree():
+    """The regression case for the backtest-mispricing fix: long_raw_return_pct/
+    long_exit_bar_offset and short_raw_return_pct/short_exit_bar_offset must be the
+    TRUE outcome of each side's own race, independently -- not just whichever side
+    won. Constructed so the two races resolve at genuinely DIFFERENT bars with
+    genuinely DIFFERENT raw returns (short's own credit-earning swap lets it clear
+    its profit-take early at bar 2 off a -0.2% move; long's race keeps running
+    until its own stop-loss fires later, at bar 3, off a bigger -0.4% move) --
+    before this fix, a model predicting the WRONG direction (long, when short
+    actually won) would have been priced using short's -0.2% raw return as a
+    stand-in, instead of long's true -0.4%."""
+    price = np.array([100.0, 99.8, 99.8, 99.6, 99.9, 99.5])
+    spread = np.zeros(6)
+    timestamp = np.array([_ts(2024, 1, 10 + d, 12, 0) for d in range(6)])
+
+    result = triple_barrier_labels(
+        price, spread, timestamp, profit_take_pct=0.3, stop_loss_pct=0.3, max_holding_bars=5,
+        long_swap_cost_pct_per_night=0.0, short_swap_cost_pct_per_night=-0.05,
+    )
+
+    assert result.label[0] == -1  # short wins
+    # the merged/single-winner view (pre-existing fields) reflects short's outcome
+    assert result.exit_bar_offset[0] == 2
+    assert result.raw_return_pct[0] == pytest.approx(-0.2)
+    # but long's own true race outcome -- what a wrong-direction long bet would
+    # really have realized -- is still independently available, and differs
+    assert result.long_exit_bar_offset[0] == 3
+    assert result.long_raw_return_pct[0] == pytest.approx(-0.4)
+    assert result.short_exit_bar_offset[0] == 2
+    assert result.short_raw_return_pct[0] == pytest.approx(-0.2)
+
+
 def test_short_signal_requires_short_side_to_actually_clear_its_own_cost():
     """The key regression case: a drop big enough to stop out a long does NOT,
     by itself, mean a short would have been profitable -- the short must ALSO
@@ -311,6 +343,12 @@ def test_triple_barrier_labels_from_frame_appends_expected_columns_and_keeps_oth
     assert out.iloc[0]["exit_bar_offset"] == 2
     assert out.iloc[0]["raw_return_pct"] == pytest.approx(1.5)
     assert out.iloc[0]["instrument"] == "EUR/USD"  # untouched passthrough column
+    # long wins here, so the merged view and long's own view agree
+    assert out.iloc[0]["long_exit_bar_offset"] == 2
+    assert out.iloc[0]["long_raw_return_pct"] == pytest.approx(1.5)
+    # short's own race outcome is independently available too, win or lose
+    assert "short_exit_bar_offset" in out.columns
+    assert "short_raw_return_pct" in out.columns
 
 
 def test_triple_barrier_labels_from_frame_runs_against_real_stage1_output(spark, synthetic_candles, tmp_path):

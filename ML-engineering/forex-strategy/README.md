@@ -54,8 +54,9 @@ predictions = load_test_predictions(client, resolved.run_id, "/tmp/downloaded")
 
 `load_test_predictions` downloads and loads forex-ML's `<run_uid>_predictions.npz`
 artifact — `lstm_pred_proba`, `test_timestamp`/`test_price`/`test_spread`/`test_y_raw`/
-`test_exit_bar_offset`/`test_realized_volatility`, plus the existing correctness
-booleans.
+`test_exit_bar_offset`/`test_realized_volatility`/`test_long_raw_return_pct`/
+`test_long_exit_bar_offset`/`test_short_raw_return_pct`/`test_short_exit_bar_offset`,
+plus the existing correctness booleans.
 
 ## Running the backtest
 
@@ -72,6 +73,16 @@ stop-loss hit in the lowest, so this is a direct read of the label, not a tercil
 threshold), and `simulate_trades` computes P&L net of cost:
 
 - **Spread** — charged as the full round-trip cost, always.
+- **P&L pricing by the side actually taken** — forex-ML's triple-barrier labeling
+  runs two independent races per row (long, short) but only the label reflects
+  whichever one won; `test_long_raw_return_pct`/`test_short_raw_return_pct` are
+  each side's own true outcome, and `simulate_trades` selects the one matching
+  each row's own predicted position, not a single merged value. This matters
+  because a model's prediction can disagree with the label — that's what "wrong"
+  means — and pricing a wrong-direction trade with the winning side's outcome as
+  a stand-in mispriced roughly half of every near-50%-win-rate backtest before
+  this fix (see forex-ML's README, "Backtest fix: pricing a trade by the side
+  actually taken").
 - **Swap/rollover** (`--long-swap-cost-pct-per-night`/`--short-swap-cost-pct-per-night`,
   or `--use-live-swap-cost` to fetch real current rates instead — see
   forex-ML's `forex_ml/data/swap_rates.py`) — charged once per 5pm New York
@@ -80,9 +91,10 @@ threshold), and `simulate_trades` computes P&L net of cost:
   a long position is charged the long rate, a short position the short rate —
   these are independently-signed real OANDA fields (e.g. one side can be a net
   credit while the other is a cost), not one rate mirrored with a flip. Exit
-  timestamp is computed from each row's own `test_exit_bar_offset` (how many bars
-  the triple-barrier label actually took to resolve), not a fixed `lookahead` — a
-  real, variable holding period per trade.
+  timestamp is computed separately per side, from each row's own
+  `test_long_exit_bar_offset`/`test_short_exit_bar_offset` (how many bars that
+  side's own race actually took to resolve), not a fixed `lookahead` — a real,
+  variable holding period per trade, per direction.
 - **The 5pm-NY flatten rule** (`--flatten-before-rollover`) — instead of paying swap,
   any trade whose holding period would cross a rollover is skipped entirely
   (`BacktestResult.n_flattened_for_rollover` reports how many).

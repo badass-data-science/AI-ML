@@ -24,6 +24,10 @@ def _make_splits(n_back: int = 10, n_features: int = 3, n_classes: int = 3, seed
     test["y_raw"] = rng.normal(scale=0.2, size=n_test).astype("float64")
     test["exit_bar_offset"] = rng.integers(1, 4, size=n_test)
     test["realized_volatility"] = rng.uniform(0.0005, 0.005, size=n_test)
+    test["long_raw_return_pct"] = rng.normal(scale=0.2, size=n_test).astype("float64")
+    test["long_exit_bar_offset"] = rng.integers(1, 4, size=n_test)
+    test["short_raw_return_pct"] = rng.normal(scale=0.2, size=n_test).astype("float64")
+    test["short_exit_bar_offset"] = rng.integers(1, 4, size=n_test)
 
     return Splits(train=_one(60), val=_one(20), test=test)
 

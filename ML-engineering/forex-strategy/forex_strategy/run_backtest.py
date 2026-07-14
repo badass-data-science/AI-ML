@@ -76,10 +76,12 @@ def backtest_from_mlflow(
         )
 
     entry_timestamp = predictions["test_timestamp"]
-    exit_timestamp = None
+    long_exit_timestamp = None
+    short_exit_timestamp = None
     if long_swap_cost_pct_per_night != 0.0 or short_swap_cost_pct_per_night != 0.0 or flatten_before_rollover:
         granularity_seconds = float(granularity_to_seconds_map[granularity])
-        exit_timestamp = entry_timestamp + predictions["test_exit_bar_offset"] * granularity_seconds
+        long_exit_timestamp = entry_timestamp + predictions["test_long_exit_bar_offset"] * granularity_seconds
+        short_exit_timestamp = entry_timestamp + predictions["test_short_exit_bar_offset"] * granularity_seconds
 
     position_size = None
     if size_by_realized_volatility:
@@ -88,9 +90,12 @@ def backtest_from_mlflow(
         )
 
     return simulate_trades(
-        positions, predictions["test_y_raw"], predictions["test_spread"], predictions["test_price"],
+        positions,
+        predictions["test_long_raw_return_pct"], predictions["test_short_raw_return_pct"],
+        predictions["test_spread"], predictions["test_price"],
         position_size=position_size,
-        entry_timestamp=entry_timestamp, exit_timestamp=exit_timestamp,
+        entry_timestamp=entry_timestamp,
+        long_exit_timestamp=long_exit_timestamp, short_exit_timestamp=short_exit_timestamp,
         long_swap_cost_pct_per_night=long_swap_cost_pct_per_night,
         short_swap_cost_pct_per_night=short_swap_cost_pct_per_night,
         flatten_before_rollover=flatten_before_rollover,
