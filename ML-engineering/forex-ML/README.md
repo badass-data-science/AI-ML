@@ -410,6 +410,72 @@ validation. The open problem is no longer "is the model unstable" — it's
 solved. It's "does this feature set, at this granularity, contain a
 profitable edge at all," which remains unanswered.
 
+### Richer features: multi-timeframe, volatility regime, momentum, cross-pair (2026-07-14)
+
+With "does this feature set contain a profitable edge" still unanswered, the next
+lever tried was the feature set itself: every model so far had only ever seen a
+trailing window of single-bar-derived features (volatility, return, spread/volume
+diffs, three short moving-average lookbacks, calendar/session flags) — nothing
+capturing longer-horizon trend, volatility-regime shifts, classic oscillators, or
+other pairs' behavior. Three rounds of new features were added to `forex_ml.data.
+features`, each tested (135+ unit tests passing throughout) and screened via the
+same single-window GBT check used for every other idea this session, before
+deciding whether a 5-fold multi-window validation was even warranted:
+
+| | Original (10 feat) | +multi-timeframe/vol-regime (13) | +momentum (16) | +cross-pair (17) |
+|---|---|---|---|---|
+| Classification test acc | ~0.41 | 0.411 | 0.413 | 0.412 |
+| Classification backtest, best result | win 0.528, net **+2.27%** | win 0.482, net -79.9% | win 0.492, net -65.6% | win 0.509, net -11.8% |
+| Regression backtest, threshold=0.30 | win 0.526, net **+20.32%** | win 0.505, net +8.91% | win 0.507, net -2.10% | win 0.477, net -42.13% |
+
+- **Multi-timeframe trend + volatility regime**: extended `ma_lookback_list` with a
+  96-bar (~4 trading day) lookback, giving `return_MA_96` (a longer-horizon trend
+  signal, for free via the existing moving-average machinery) and `volatility_MA_96`
+  (a long-horizon volatility baseline). A new `add_volatility_regime_features`
+  computes `volatility_regime_ratio = volatility_MA_12 / volatility_MA_96` — derives
+  which two lookbacks to use from `min`/`max(ma_lookback_list)` rather than
+  hardcoding, so it doesn't break under a scaled-down test config, and falls back to
+  a neutral 1.0 rather than dividing by a near-zero long-window volatility.
+- **Momentum/oscillator analogs**: `add_momentum_features` adds three
+  stationarity-safe analogs of classic price-momentum indicators, built on the
+  already-stationary `return` column rather than raw price levels (this project's
+  existing no-raw-price-features convention) — `return_sma_crossover` (an
+  SMA-crossover MACD analog), `return_zscore_12` (a Bollinger-band-position analog),
+  and `rsi_12` (a simple, non-Wilder-smoothed RSI variant, since Spark window
+  functions can't express Wilder's recursive smoothing without a per-partition UDF).
+- **Cross-pair "USD strength"**: `compute_cross_pair_usd_strength` averages
+  sign-adjusted returns across this project's other configured pairs (every pair is
+  USD-quoted or USD-based, so this approximates broad-dollar strength/weakness
+  independent of the target pair's own price action) into one
+  `usd_strength_return` feature. Implemented as a new `pull_cross_pair_return_task`
+  in `prepare_data_flow.py` that pulls each other pair's raw candles fresh (same
+  date range) and reduces to just `return`, rather than depending on that pair's own
+  already-materialized Stage-1 output — avoids an ordering dependency where pair A's
+  prep would require pair B's Stage-1 to already exist. `add_cross_pair_features`
+  left-joins this onto the target pair by timestamp, falling back to a neutral 0.0
+  for any timestamp with no cross-pair data (a feed gap) rather than dropping the
+  row.
+
+Cross-pair was the one addition that moved something real: classification win rate
+crossed 50% at three separate confidence thresholds for the first time since the
+original feature set, and the best result got much closer to breakeven (-11.8% net
+vs. -65.6% without it). But it never turned net-positive — transaction costs still
+dominate every threshold — so per the same discipline that caught the earlier
+false-positive results (only validate a result across multiple windows if it's
+already promising, i.e. net-positive, in one), this didn't clear the bar for the
+expensive 5-fold check. Regression got worse with cross-pair added, not better.
+`FeatureParams.engineered_columns` (the hand-maintained mirror Stage 1's columns
+are checked against — see Configuration above) gained a two-directional test
+(`test_engineered_columns_matches_actual_stage1_output`) while this code was being
+touched, closing a real gap where only one direction of that mirror was ever
+checked.
+
+**Net verdict**: 12 new, tested, real features across three phases, and none
+produced a profitable single-window result on EUR/USD H1. Cross-pair is the most
+encouraging direction found so far (worth revisiting, e.g. with a longer cross-pair
+lookback/smoothing rather than a same-bar snapshot) — but "richer features" as a
+category hasn't cracked profitability at this pair/granularity yet.
+
 ## Running a single pair
 
 ```bash

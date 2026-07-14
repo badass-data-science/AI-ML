@@ -36,10 +36,16 @@ class FeatureParams(BaseModel):
             "day_sin", "day_cos", "week_sin", "week_cos",
             "is_tokyo_session", "is_london_session", "is_new_york_session", "is_london_new_york_overlap",
             "volatility", "return", "diff_spread_close", "diff_volume",
+            "volatility_regime_ratio", "return_sma_crossover", "usd_strength_return",
         }
         for lookback in self.ma_lookback_list:
             for column in self.ma_columns_list:
                 columns.add(f"{column}_MA_{lookback}")
+        # add_momentum_features names these dynamically off min(ma_lookback_list) --
+        # mirror that derivation here rather than a hardcoded lookback.
+        short_lookback = min(self.ma_lookback_list)
+        columns.add(f"return_zscore_{short_lookback}")
+        columns.add(f"rsi_{short_lookback}")
         return columns
 
 

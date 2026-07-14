@@ -19,6 +19,15 @@ def _write_small_params(tmp_path, output_dir, tracking_uri, experiment_name: str
         "min_training_timestamp": "2020-01-01T00:00:00",
         "output_dir": str(output_dir),
     })
+    # return_MA_96/volatility_MA_96/return_zscore_12/rsi_12 (production columns_x)
+    # don't exist under this scaled-down ma_lookback_list=[3, 5] (min/max lookback
+    # is 3/5 here, not 12/96) -- drop them here rather than scaling ma_lookback_list
+    # up, which would need far more synthetic candle rows. usd_strength_return also
+    # dropped: this test's engineer_and_save_task call doesn't set up cross-pair data.
+    raw["split"]["columns_x"] = [
+        c for c in raw["split"]["columns_x"]
+        if c not in ("return_MA_96", "volatility_MA_96", "return_zscore_12", "rsi_12", "usd_strength_return")
+    ]
     raw["train"].update({
         "number_of_cells_per_rnn_layer": [4],
         "number_of_cells_per_dense_layer": [4],

@@ -127,6 +127,58 @@ def add_market_features(df: DataFrame, cols: FeatureColumns = FeatureColumns()) 
     return df.withColumn("realized_volatility", F.avg(F.col("volatility")).over(realized_vol_window))
 
 
+# Pairs where USD is the BASE currency (USD/XXX) -- a rising price means USD
+# strengthened, so their return contributes to compute_cross_pair_usd_strength
+# directly (+). Every other pair this project tracks is USD-QUOTE (XXX/USD),
+# where a rising price means the OTHER currency strengthened (USD weakened), so
+# those contribute with a flipped sign (-). See compute_cross_pair_usd_strength.
+USD_BASE_PAIRS = frozenset({"USD/CAD", "USD/CHF", "USD/JPY"})
+
+
+def compute_cross_pair_usd_strength(
+    other_pairs_returns: dict[str, DataFrame],
+    cols: FeatureColumns = FeatureColumns(),
+) -> DataFrame:
+    """Averages sign-adjusted returns across this project's OTHER configured pairs
+    into one (unix_epoch_s, usd_strength_return) frame -- a broad-dollar-strength
+    proxy, since every pair this project tracks is USD-quoted or USD-based. Each
+    value in `other_pairs_returns` must already be reduced to just
+    [unix_epoch_s, return] for that instrument (the caller's job -- see
+    prepare_data_flow.py's pull_cross_pair_return_task, which computes this
+    directly from that pair's raw candles rather than running its full Stage-1
+    pipeline, since only the raw return is needed here). See USD_BASE_PAIRS for
+    the sign convention.
+    """
+    parts = []
+    for instrument, other_df in other_pairs_returns.items():
+        sign = 1.0 if instrument in USD_BASE_PAIRS else -1.0
+        parts.append(
+            other_df.select(
+                F.col(cols.column_timestamp),
+                (F.lit(sign) * F.col("return")).alias("signed_return"),
+            )
+        )
+    stacked = parts[0]
+    for part in parts[1:]:
+        stacked = stacked.unionByName(part)
+    return stacked.groupBy(cols.column_timestamp).agg(F.avg("signed_return").alias("usd_strength_return"))
+
+
+def add_cross_pair_features(
+    df: DataFrame,
+    cross_pair_usd_strength: DataFrame,
+    cols: FeatureColumns = FeatureColumns(),
+) -> DataFrame:
+    """Joins a precomputed cross-pair "USD strength" signal (see
+    compute_cross_pair_usd_strength) onto this pair's frame by timestamp. Left
+    join: a timestamp with no cross-pair data (e.g. every other pair's feed has a
+    gap right there) gets a neutral 0.0 rather than dropping the row -- degrade
+    gracefully, same principle as is_forward_filled elsewhere in this pipeline.
+    """
+    joined = df.join(cross_pair_usd_strength, on=cols.column_timestamp, how="left")
+    return joined.withColumn("usd_strength_return", F.coalesce(F.col("usd_strength_return"), F.lit(0.0)))
+
+
 def add_targets(df: DataFrame, lookahead: int, cols: FeatureColumns = FeatureColumns()) -> DataFrame:
     window_spec = Window.partitionBy(*cols.columns_partition).orderBy(*cols.columns_sort)
 
@@ -162,6 +214,82 @@ def compute_moving_averages(
         for column_name in ma_columns_list:
             df = df.withColumn(f"{column_name}_MA_{ma_lookback}", F.avg(F.col(column_name)).over(window_spec))
     return df.orderBy(*cols.columns_sort)
+
+
+def add_volatility_regime_features(
+    df: DataFrame,
+    ma_lookback_list: list[int],
+    cols: FeatureColumns = FeatureColumns(),
+) -> DataFrame:
+    """Ratio of short- to long-horizon realized volatility (volatility_MA_<min
+    lookback> / volatility_MA_<max lookback>) -- expanding (>1) vs. contracting (<1)
+    volatility regime, a signal distinct from either MA's own absolute level. Must
+    run after compute_moving_averages with "volatility" in ma_columns_list (needs
+    both MA columns to already exist) -- derives which two lookbacks to use from
+    ma_lookback_list itself, rather than hardcoding specific values, so this doesn't
+    break under a different-than-production lookback list (e.g. a scaled-down test
+    config). Guards near-zero long-window volatility (a long enough flat stretch)
+    the same way persistence_baseline guards its own zero-denominator edge case:
+    fall back to a neutral ratio of 1.0 rather than dividing by ~0.
+    """
+    short_col = F.col(f"volatility_MA_{min(ma_lookback_list)}")
+    long_col = F.col(f"volatility_MA_{max(ma_lookback_list)}")
+    ratio = F.when(long_col > 1e-9, short_col / long_col).otherwise(F.lit(1.0))
+    return df.withColumn("volatility_regime_ratio", ratio)
+
+
+def add_momentum_features(
+    df: DataFrame,
+    ma_lookback_list: list[int],
+    cols: FeatureColumns = FeatureColumns(),
+) -> DataFrame:
+    """Stationarity-safe analogs of classic price-momentum oscillators, built on
+    the already-stationary `return` column rather than raw price levels (this
+    project's existing convention -- see drop_raw_price_columns) -- not the
+    textbook price-based MACD/RSI/Bollinger-band formulas, which Spark window
+    functions can't express directly anyway without a per-partition UDF (Wilder's
+    RSI smoothing and MACD's EMA are both recursive across rows). Reuses
+    ma_lookback_list's own min/max, the same way add_volatility_regime_features
+    does, rather than introducing new hardcoded lookback constants:
+
+    - `return_sma_crossover` = return_MA_<min> - return_MA_<max> (an SMA-crossover
+      MACD analog -- positive when short-horizon trend runs above long-horizon
+      trend). Needs compute_moving_averages to have already run.
+    - `return_zscore_<min>` = (return - return_MA_<min>) / stddev(return) over the
+      same trailing <min>-bar window (a Bollinger-band-position analog). Guards a
+      near-zero trailing stddev (a long flat stretch) by falling back to 0.
+    - `rsi_<min>` = a simple (non-Wilder-smoothed) RSI variant over the trailing
+      <min>-bar window: avg(positive returns) / [avg(positive) + avg(negative
+      magnitude)], scaled to the usual 0-100 range. Guards the case where both
+      trailing gain and loss are ~0 (a flat stretch) by falling back to a neutral
+      50 rather than dividing by ~0.
+    """
+    short_lookback = min(ma_lookback_list)
+    long_lookback = max(ma_lookback_list)
+
+    df = df.withColumn(
+        "return_sma_crossover",
+        F.col(f"return_MA_{short_lookback}") - F.col(f"return_MA_{long_lookback}"),
+    )
+
+    window_spec = (
+        Window.partitionBy(*cols.columns_partition).orderBy(*cols.columns_sort)
+        .rowsBetween(1 - short_lookback, 0)
+    )
+    trailing_std = F.stddev(F.col("return")).over(window_spec)
+    zscore = F.when(
+        trailing_std > 1e-12, (F.col("return") - F.col(f"return_MA_{short_lookback}")) / trailing_std,
+    ).otherwise(F.lit(0.0))
+    df = df.withColumn(f"return_zscore_{short_lookback}", zscore)
+
+    gain = F.when(F.col("return") > 0, F.col("return")).otherwise(F.lit(0.0))
+    loss = F.when(F.col("return") < 0, -F.col("return")).otherwise(F.lit(0.0))
+    avg_gain = F.avg(gain).over(window_spec)
+    avg_loss = F.avg(loss).over(window_spec)
+    rsi = F.when(
+        (avg_gain + avg_loss) > 1e-12, 100.0 * avg_gain / (avg_gain + avg_loss),
+    ).otherwise(F.lit(50.0))
+    return df.withColumn(f"rsi_{short_lookback}", rsi)
 
 
 def drop_raw_price_columns(
@@ -247,6 +375,7 @@ def engineer_features(
     lookahead: int,
     n_back: int,
     training_and_testing: bool,
+    cross_pair_usd_strength: DataFrame | None = None,
     cols: FeatureColumns = FeatureColumns(),
 ) -> tuple[DataFrame, DataFrame, list[str]]:
     """Run the full Stage-1 pipeline on raw candles.
@@ -254,14 +383,24 @@ def engineer_features(
     Returns (df_time_series_lists, df_non_time_series, columns_x) — the same two
     dataframe shapes the original notebook wrote to Parquet, plus the resolved
     feature-column list so callers don't have to re-derive it.
+
+    `cross_pair_usd_strength` is optional (default None, meaning skip) because it
+    needs sibling-pair data the caller must assemble via I/O (see
+    prepare_data_flow.py's pull_cross_pair_return_task/compute_cross_pair_usd_strength)
+    -- this function itself stays pure/I/O-free. Production runs always pass it;
+    tests that only care about a single synthetic pair can omit it.
     """
     df = add_calendar_features(df, cols)
     df = add_session_features(df, cols)
     df = add_market_features(df, cols)
+    if cross_pair_usd_strength is not None:
+        df = add_cross_pair_features(df, cross_pair_usd_strength, cols)
     df = add_targets(df, lookahead, cols)
     df = drop_raw_price_columns(df, columns_base, training_and_testing, cols)
     df = add_row_number(df, cols)
     df = compute_moving_averages(df, ma_lookback_list, ma_columns_list, cols)
+    df = add_volatility_regime_features(df, ma_lookback_list, cols)
+    df = add_momentum_features(df, ma_lookback_list, cols)
     df = filter_incomplete_rows(df, ma_lookback_list, lookahead, training_and_testing, cols)
 
     df_non_time_series, columns_x = select_xy_columns(df, cols)

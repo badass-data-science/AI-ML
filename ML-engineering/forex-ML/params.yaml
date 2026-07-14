@@ -18,7 +18,11 @@ feature:
     - M15
   n_back: 200
   lookahead: 4
-  ma_lookback_list: [12, 30, 50]
+  # 96 added (2026-07-14) -- ~4 trading days at H1, a longer-horizon baseline the
+  # existing 12/30/50 lookbacks (all <=~2 days) don't cover. Feeds both a
+  # multi-timeframe trend signal (return_MA_96) and the long leg of
+  # volatility_regime_ratio below (see add_volatility_regime_features).
+  ma_lookback_list: [12, 30, 50, 96]
   columns_base: [mid_open, mid_high, mid_low, mid_close, spread_close, volume]
   ma_columns_list: [volatility, return, diff_spread_close, diff_volume]
   training_and_testing: true
@@ -43,7 +47,13 @@ split:
                                 # forex_ml/data/swap_rates.py), falling back to
                                 # this constant only if no live snapshot exists
                                 # yet for the pair being trained
-  columns_x: [volatility, return, diff_spread_close, diff_volume, day_sin, day_cos, is_tokyo_session, is_london_session, is_new_york_session, is_london_new_york_overlap]
+  # return_MA_96/volatility_MA_96/volatility_regime_ratio added (2026-07-14) --
+  # multi-timeframe trend + volatility-regime features, see add_volatility_regime_features.
+  # return_sma_crossover/return_zscore_12/rsi_12 added (2026-07-14) -- stationarity-safe
+  # MACD/Bollinger/RSI analogs, see add_momentum_features.
+  # usd_strength_return added (2026-07-14) -- cross-pair broad-dollar-strength
+  # proxy, see compute_cross_pair_usd_strength/add_cross_pair_features.
+  columns_x: [volatility, return, diff_spread_close, diff_volume, day_sin, day_cos, is_tokyo_session, is_london_session, is_new_york_session, is_london_new_york_overlap, return_MA_96, volatility_MA_96, volatility_regime_ratio, return_sma_crossover, return_zscore_12, rsi_12, usd_strength_return]
   train_val_proportion: [0.7, 0.15]
 
 # Cross product of feature.instruments x feature.granularities, spelled out because

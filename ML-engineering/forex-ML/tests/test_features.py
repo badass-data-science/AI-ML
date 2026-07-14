@@ -5,12 +5,15 @@ import datetime
 import numpy as np
 import pandas as pd
 import pyspark.sql.functions as F
+import pytest
 
 from forex_ml.data.features import (
     add_calendar_features,
+    add_cross_pair_features,
     add_market_features,
     add_session_features,
     add_targets,
+    compute_cross_pair_usd_strength,
     engineer_features,
     window_into_arrays,
 )
@@ -48,6 +51,40 @@ def test_add_market_features_realized_volatility_is_a_fixed_12_bar_trailing_aver
 
     manual = pdf["volatility"].rolling(window=12, min_periods=1).mean()
     np.testing.assert_allclose(pdf["realized_volatility"].to_numpy(), manual.to_numpy(), rtol=1e-4)
+
+
+def test_compute_cross_pair_usd_strength_averages_sign_adjusted_returns(spark):
+    """USD/JPY is USD-base: a positive return means USD strengthened, contributes
+    directly. EUR/USD is USD-quote: a NEGATIVE return also means USD strengthened
+    (EUR weakened), so it must contribute with a flipped sign -- both pairs here
+    agree "USD strengthened", so the averaged signal should come out positive, not
+    cancel out or come out negative from a sign-convention mistake."""
+    ts = [1000, 2000]
+    usdjpy = spark.createDataFrame(pd.DataFrame({"unix_epoch_s": ts, "return": [0.01, 0.01]}))
+    eurusd = spark.createDataFrame(pd.DataFrame({"unix_epoch_s": ts, "return": [-0.02, -0.02]}))
+
+    result = (
+        compute_cross_pair_usd_strength({"USD/JPY": usdjpy, "EUR/USD": eurusd})
+        .orderBy("unix_epoch_s").toPandas()
+    )
+
+    # signed: USD/JPY contributes +0.01, EUR/USD contributes -(-0.02) = +0.02 -> avg 0.015
+    np.testing.assert_allclose(result["usd_strength_return"].to_numpy(), [0.015, 0.015])
+
+
+def test_add_cross_pair_features_fills_neutral_zero_for_missing_timestamp(spark, synthetic_candles):
+    df = spark.createDataFrame(synthetic_candles)
+    ts0 = int(synthetic_candles["unix_epoch_s"].iloc[0])
+    ts1 = int(synthetic_candles["unix_epoch_s"].iloc[1])
+    # cross-pair data only covers the first timestamp -- second is a gap
+    cross_pair_df = spark.createDataFrame(pd.DataFrame({
+        "unix_epoch_s": [ts0], "usd_strength_return": [0.42],
+    }))
+
+    result = add_cross_pair_features(df, cross_pair_df).toPandas().set_index("unix_epoch_s")
+
+    assert result.loc[ts0, "usd_strength_return"] == pytest.approx(0.42)
+    assert result.loc[ts1, "usd_strength_return"] == 0.0
 
 
 def test_add_targets_pd_lead_matches_manual_calculation(spark, synthetic_candles):

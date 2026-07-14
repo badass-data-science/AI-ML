@@ -20,30 +20,56 @@ from pyspark.sql import DataFrame, SparkSession
 
 from forex_ml.config import FeatureParams, load_params
 from forex_ml.data import influx_source
-from forex_ml.data.features import engineer_features
+from forex_ml.data.features import compute_cross_pair_usd_strength, engineer_features
 from forex_ml.paths import non_time_series_parquet_path, pair_key, stage1_config_path, time_series_parquet_path
 from forex_ml.spark_session import DEFAULT_SPARK_MEMORY, build_spark_session
 
 
-@task(name="pull-candles", retries=3, retry_delay_seconds=30)
-def pull_candles_task(instrument: str, granularity: str, params: FeatureParams):
+def _pull_candles(instrument: str, granularity: str, params: FeatureParams):
     from forex.eda.eda_config.eda_config import granularity_to_seconds_map
 
-    logger = get_run_logger()
     if params.training_and_testing:
         min_ts, max_ts = influx_source.training_timestamp_range(params.min_training_timestamp)
     else:
         min_ts, max_ts = influx_source.inference_timestamp_range(
             granularity_to_seconds_map[granularity], params.n_back
         )
+    return influx_source.pull_candles(instrument, granularity, min_ts, max_ts)
 
-    pdf = influx_source.pull_candles(instrument, granularity, min_ts, max_ts)
+
+@task(name="pull-candles", retries=3, retry_delay_seconds=30)
+def pull_candles_task(instrument: str, granularity: str, params: FeatureParams):
+    logger = get_run_logger()
+    pdf = _pull_candles(instrument, granularity, params)
     logger.info("Pulled %d rows for %s %s", len(pdf), instrument, granularity)
     return pdf
 
 
+@task(name="pull-cross-pair-return", retries=3, retry_delay_seconds=30)
+def pull_cross_pair_return_task(instrument: str, granularity: str, params: FeatureParams):
+    """Pulls one OTHER pair's raw candles (same source/date-range as the target
+    pair) and reduces to just [unix_epoch_s, return] -- return = mid_close -
+    mid_open, matching add_market_features's own definition for the target pair,
+    computed directly here rather than running that other pair's full Stage-1
+    pipeline, which compute_cross_pair_usd_strength doesn't need.
+    """
+    logger = get_run_logger()
+    pdf = _pull_candles(instrument, granularity, params)
+    logger.info("Pulled %d cross-pair rows for %s %s", len(pdf), instrument, granularity)
+    reduced = pdf[["unix_epoch_s", "mid_open", "mid_close"]].copy()
+    reduced["return"] = reduced["mid_close"] - reduced["mid_open"]
+    return reduced[["unix_epoch_s", "return"]]
+
+
 @task(name="engineer-and-save-features", cache_policy=NO_CACHE)
-def engineer_and_save_task(spark: SparkSession, pdf, instrument: str, granularity: str, params: FeatureParams) -> str:
+def engineer_and_save_task(
+    spark: SparkSession,
+    pdf,
+    instrument: str,
+    granularity: str,
+    params: FeatureParams,
+    other_pairs_returns: dict[str, DataFrame] | None = None,
+) -> str:
     # NO_CACHE: this task's args include a SparkSession/DataFrame, which Prefect's
     # default cache-key hashing can't serialize — without it, every run logs a noisy
     # (harmless) HashError and just skips caching anyway, so opt out explicitly.
@@ -73,6 +99,10 @@ def engineer_and_save_task(spark: SparkSession, pdf, instrument: str, granularit
         .select(*columns_sort, *params.columns_base, *optional_columns)
     )
 
+    cross_pair_usd_strength = None
+    if other_pairs_returns:
+        cross_pair_usd_strength = compute_cross_pair_usd_strength(other_pairs_returns)
+
     df_time_series, df_non_time_series, columns_x = engineer_features(
         df,
         ma_lookback_list=params.ma_lookback_list,
@@ -81,6 +111,7 @@ def engineer_and_save_task(spark: SparkSession, pdf, instrument: str, granularit
         lookahead=params.lookahead,
         n_back=params.n_back,
         training_and_testing=params.training_and_testing,
+        cross_pair_usd_strength=cross_pair_usd_strength,
     )
 
     key = pair_key(instrument, granularity, params.n_back, params.lookahead)
@@ -122,7 +153,20 @@ def prepare_data_flow(
     params = load_params(params_path) if params_path else load_params()
     spark = build_spark_session("forex-ml-prepare-data", memory=spark_memory)
     pdf = pull_candles_task(instrument, granularity, params.feature)
-    return engineer_and_save_task(spark, pdf, instrument, granularity, params.feature)
+
+    # Cross-pair "USD strength" feature (see compute_cross_pair_usd_strength) needs
+    # every OTHER configured pair's raw return, pulled fresh here rather than reused
+    # from that pair's own Stage-1 output -- avoids an ordering dependency where
+    # pair A's prep would require pair B's Stage-1 to already exist (and vice versa).
+    other_instruments = [i for i in params.feature.instruments if i != instrument]
+    other_pairs_returns = {
+        other_instrument: spark.createDataFrame(
+            pull_cross_pair_return_task(other_instrument, granularity, params.feature)
+        )
+        for other_instrument in other_instruments
+    }
+
+    return engineer_and_save_task(spark, pdf, instrument, granularity, params.feature, other_pairs_returns)
 
 
 def main() -> None:
