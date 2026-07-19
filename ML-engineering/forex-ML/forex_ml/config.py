@@ -28,6 +28,15 @@ class FeatureParams(BaseModel):
     training_and_testing: bool
     min_training_timestamp: datetime
     output_dir: str
+    # Unlike cross_pair_usd_strength (which prepare_data_flow.py computes for EVERY
+    # pair unconditionally, so usd_strength_return below is always safe to list),
+    # the daily-timeframe columns are genuinely opt-in per pair -- only pairs with
+    # Daily candles already backfilled can use them (see prepare_data_flow.py's
+    # --include-daily-trend / pull_daily_trend_task). Listing them unconditionally
+    # in engineered_columns would let split.columns_x reference a column Stage 1
+    # never actually produces for any pair that leaves this False, exactly the
+    # silent-drift risk this property exists to prevent.
+    include_daily_trend: bool = False
 
     @property
     def engineered_columns(self) -> set[str]:
@@ -38,6 +47,8 @@ class FeatureParams(BaseModel):
             "volatility", "return", "diff_spread_close", "diff_volume",
             "volatility_regime_ratio", "return_sma_crossover", "usd_strength_return",
         }
+        if self.include_daily_trend:
+            columns |= {"daily_return_ma", "daily_volatility_ma"}
         for lookback in self.ma_lookback_list:
             for column in self.ma_columns_list:
                 columns.add(f"{column}_MA_{lookback}")

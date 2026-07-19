@@ -10,6 +10,7 @@ import pytest
 from forex_ml.data.features import (
     add_calendar_features,
     add_cross_pair_features,
+    add_daily_timeframe_features,
     add_market_features,
     add_session_features,
     add_targets,
@@ -212,3 +213,64 @@ def test_session_features_are_utc_independent_of_spark_session_timezone(spark):
         assert list(result["is_tokyo_session"]) == [1.0 if 0 <= h < 9 else 0.0 for h in hours]
     finally:
         spark.conf.set("spark.sql.session.timeZone", original_tz)
+
+
+_ONE_DAY = 24 * 60 * 60
+
+
+def test_add_daily_timeframe_features_attaches_the_prior_days_closed_bar(spark):
+    day0 = int(datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc).timestamp())
+    day1 = day0 + _ONE_DAY
+    day2 = day0 + 2 * _ONE_DAY
+    daily_trend = pd.DataFrame({
+        "unix_epoch_s": [day0, day1, day2],
+        "daily_return_ma": [1.0, 2.0, 3.0],
+        "daily_volatility_ma": [0.1, 0.2, 0.3],
+    })
+    h1 = spark.createDataFrame(pd.DataFrame({
+        "instrument": "EUR/USD", "granularity": "H1",
+        "unix_epoch_s": [day1 + 3600, day2 + 3600],  # 1am on day 1 and day 2
+    }))
+
+    result = add_daily_timeframe_features(h1, daily_trend).orderBy("unix_epoch_s").toPandas()
+
+    # 1am on day 1 sees day 0's bar (the only one closed by then); 1am on day 2 sees day 1's.
+    assert result["daily_return_ma"].tolist() == [1.0, 2.0]
+    assert result["daily_volatility_ma"].tolist() == [0.1, 0.2]
+
+
+def test_add_daily_timeframe_features_never_sees_its_own_still_forming_day(spark):
+    """The critical no-lookahead check: an H1 bar late in day 1 (23:00) must NOT see
+    day 1's own daily bar, since that bar hasn't closed yet at that point -- only
+    day 0's, even though day 1's own row already exists in `daily_trend`."""
+    day0 = int(datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc).timestamp())
+    day1 = day0 + _ONE_DAY
+    daily_trend = pd.DataFrame({
+        "unix_epoch_s": [day0, day1],
+        "daily_return_ma": [1.0, 2.0],
+        "daily_volatility_ma": [0.1, 0.2],
+    })
+    h1 = spark.createDataFrame(pd.DataFrame({
+        "instrument": "EUR/USD", "granularity": "H1",
+        "unix_epoch_s": [day1 + 23 * 3600],  # 23:00 on day 1 -- day 1's own bar closes at day2 (midnight)
+    }))
+
+    result = add_daily_timeframe_features(h1, daily_trend).toPandas()
+
+    assert result["daily_return_ma"].iloc[0] == 1.0  # day 0's, not day 1's own 2.0
+    assert result["daily_volatility_ma"].iloc[0] == 0.1
+
+
+def test_add_daily_timeframe_features_is_nan_before_any_daily_bar_has_closed(spark):
+    day0 = int(datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc).timestamp())
+    daily_trend = pd.DataFrame({
+        "unix_epoch_s": [day0], "daily_return_ma": [1.0], "daily_volatility_ma": [0.1],
+    })
+    h1 = spark.createDataFrame(pd.DataFrame({
+        "instrument": "EUR/USD", "granularity": "H1",
+        "unix_epoch_s": [day0 + 3600],  # 1am on day 0 -- day 0's own bar hasn't closed yet
+    }))
+
+    result = add_daily_timeframe_features(h1, daily_trend).toPandas()
+
+    assert pd.isna(result["daily_return_ma"].iloc[0])

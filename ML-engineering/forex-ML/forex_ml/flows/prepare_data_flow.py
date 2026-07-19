@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 
+import pandas as pd
 import pyspark.sql.functions as F
 from prefect import flow, get_run_logger, task
 from prefect.cache_policies import NO_CACHE
@@ -61,6 +62,32 @@ def pull_cross_pair_return_task(instrument: str, granularity: str, params: Featu
     return reduced[["unix_epoch_s", "return"]]
 
 
+DAILY_TREND_MA_LOOKBACK_DAYS = 5
+
+
+@task(name="pull-daily-trend", retries=3, retry_delay_seconds=30)
+def pull_daily_trend_task(instrument: str, params: FeatureParams, ma_lookback_days: int = DAILY_TREND_MA_LOOKBACK_DAYS) -> pd.DataFrame:
+    """Pulls this SAME pair's own Daily-granularity candles and reduces to a short
+    trailing average of daily return/volatility -- see
+    forex_ml.data.features.add_daily_timeframe_features for how this gets attached
+    back onto the (typically much finer-granularity) target frame via a
+    causally-correct as-of join. Requires Daily candles to already exist in
+    InfluxDB for this instrument (forex-etl's candlestick_flow/forward_fill_flow
+    at granularity='D') -- not every tracked pair has this backfilled yet.
+    """
+    logger = get_run_logger()
+    pdf = _pull_candles(instrument, "D", params).sort_values("unix_epoch_s").reset_index(drop=True)
+    daily_return = pdf["mid_close"] - pdf["mid_open"]
+    daily_volatility = pdf["mid_high"] - pdf["mid_low"]
+    result = pd.DataFrame({
+        "unix_epoch_s": pdf["unix_epoch_s"],
+        "daily_return_ma": daily_return.rolling(ma_lookback_days, min_periods=1).mean(),
+        "daily_volatility_ma": daily_volatility.rolling(ma_lookback_days, min_periods=1).mean(),
+    })
+    logger.info("Pulled %d daily bars for %s daily-trend feature", len(result), instrument)
+    return result
+
+
 @task(name="engineer-and-save-features", cache_policy=NO_CACHE)
 def engineer_and_save_task(
     spark: SparkSession,
@@ -69,6 +96,7 @@ def engineer_and_save_task(
     granularity: str,
     params: FeatureParams,
     other_pairs_returns: dict[str, DataFrame] | None = None,
+    daily_trend: pd.DataFrame | None = None,
 ) -> str:
     # NO_CACHE: this task's args include a SparkSession/DataFrame, which Prefect's
     # default cache-key hashing can't serialize — without it, every run logs a noisy
@@ -112,6 +140,7 @@ def engineer_and_save_task(
         n_back=params.n_back,
         training_and_testing=params.training_and_testing,
         cross_pair_usd_strength=cross_pair_usd_strength,
+        daily_trend=daily_trend,
     )
 
     key = pair_key(instrument, granularity, params.n_back, params.lookahead)
@@ -166,7 +195,9 @@ def prepare_data_flow(
         for other_instrument in other_instruments
     }
 
-    return engineer_and_save_task(spark, pdf, instrument, granularity, params.feature, other_pairs_returns)
+    daily_trend = pull_daily_trend_task(instrument, params.feature) if params.feature.include_daily_trend else None
+
+    return engineer_and_save_task(spark, pdf, instrument, granularity, params.feature, other_pairs_returns, daily_trend)
 
 
 def main() -> None:

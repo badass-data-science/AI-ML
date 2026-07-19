@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
+import pandas as pd
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, Window
-from pyspark.sql.types import FloatType
+from pyspark.sql.types import DoubleType, FloatType
 from python_tools_and_shortcuts.time_series_essentials.day_and_week.day_and_week import (
     day_cos, day_sin, week_cos, week_sin,
 )
@@ -177,6 +179,52 @@ def add_cross_pair_features(
     """
     joined = df.join(cross_pair_usd_strength, on=cols.column_timestamp, how="left")
     return joined.withColumn("usd_strength_return", F.coalesce(F.col("usd_strength_return"), F.lit(0.0)))
+
+
+_SECONDS_PER_DAY = 24 * 60 * 60
+
+
+def add_daily_timeframe_features(
+    df: DataFrame,
+    daily_trend: pd.DataFrame,
+    cols: FeatureColumns = FeatureColumns(),
+) -> DataFrame:
+    """As-of join: attaches the most recently CLOSED daily bar's own trailing
+    return/volatility average onto every row of `df` (H1 or any other sub-daily
+    granularity), via a broadcast binary-search lookup rather than an
+    exact-timestamp match (a daily bar and an H1 bar essentially never share a
+    timestamp).
+
+    `daily_trend` is a small, already-computed pandas DataFrame (see
+    prepare_data_flow.py's pull_daily_trend_task) with one row per daily bar:
+    [unix_epoch_s, daily_return_ma, daily_volatility_ma].
+
+    Causal correctness: a daily bar spanning [t, t+86400) does not actually CLOSE
+    until t+86400, so using its own start-of-day unix_epoch_s as the "available
+    from" cutoff would let every H1 bar on that SAME calendar day see that day's
+    own still-forming aggregate -- a lookahead bug of exactly the kind this
+    project has hunted before (see ForwardFillInator's DST fix,
+    triple_barrier.py's purge_bars). Shifting each daily bar's timestamp forward
+    by one full day before the lookup fixes this: an H1 bar can only ever see a
+    daily bar that has genuinely finished.
+    """
+    daily_sorted = daily_trend.sort_values(cols.column_timestamp).reset_index(drop=True)
+    available_from = daily_sorted[cols.column_timestamp].to_numpy() + _SECONDS_PER_DAY
+
+    def _make_lookup_udf(values: np.ndarray):
+        @F.pandas_udf(DoubleType())  # type: ignore[call-overload]  # pyspark stub gap, not a real type error
+        def _lookup(timestamp: pd.Series) -> pd.Series:
+            idx = np.searchsorted(available_from, timestamp.to_numpy(), side="right") - 1
+            result = np.where(idx >= 0, values[np.clip(idx, 0, len(values) - 1)], np.nan)
+            return pd.Series(result, index=timestamp.index)
+
+        return _lookup
+
+    return (
+        df
+        .withColumn("daily_return_ma", _make_lookup_udf(daily_sorted["daily_return_ma"].to_numpy())(F.col(cols.column_timestamp)))
+        .withColumn("daily_volatility_ma", _make_lookup_udf(daily_sorted["daily_volatility_ma"].to_numpy())(F.col(cols.column_timestamp)))
+    )
 
 
 def add_targets(df: DataFrame, lookahead: int, cols: FeatureColumns = FeatureColumns()) -> DataFrame:
@@ -376,6 +424,7 @@ def engineer_features(
     n_back: int,
     training_and_testing: bool,
     cross_pair_usd_strength: DataFrame | None = None,
+    daily_trend: pd.DataFrame | None = None,
     cols: FeatureColumns = FeatureColumns(),
 ) -> tuple[DataFrame, DataFrame, list[str]]:
     """Run the full Stage-1 pipeline on raw candles.
@@ -389,12 +438,18 @@ def engineer_features(
     prepare_data_flow.py's pull_cross_pair_return_task/compute_cross_pair_usd_strength)
     -- this function itself stays pure/I/O-free. Production runs always pass it;
     tests that only care about a single synthetic pair can omit it.
+
+    `daily_trend` is likewise optional (default None, meaning skip) -- this
+    pair's OWN daily-bar trend/volatility, assembled by the caller via
+    prepare_data_flow.py's pull_daily_trend_task, see add_daily_timeframe_features.
     """
     df = add_calendar_features(df, cols)
     df = add_session_features(df, cols)
     df = add_market_features(df, cols)
     if cross_pair_usd_strength is not None:
         df = add_cross_pair_features(df, cross_pair_usd_strength, cols)
+    if daily_trend is not None:
+        df = add_daily_timeframe_features(df, daily_trend, cols)
     df = add_targets(df, lookahead, cols)
     df = drop_raw_price_columns(df, columns_base, training_and_testing, cols)
     df = add_row_number(df, cols)
