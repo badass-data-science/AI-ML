@@ -227,6 +227,79 @@ def add_daily_timeframe_features(
     )
 
 
+# Sub-window sizes for the rescaled-range Hurst estimator below -- must each divide
+# HURST_WINDOW_BARS evenly (100/10=10, 100/20=5, 100/25=4, 100/50=2, 100/100=1 chunks)
+# so every scale gets at least one full, non-overlapping chunk. Five log-spaced
+# scales is enough points for a stable log-log slope without over-fragmenting a
+# 100-bar window into chunks too short to estimate a meaningful local R/S.
+HURST_WINDOW_BARS = 100
+HURST_SUBWINDOW_SIZES = (10, 20, 25, 50, 100)
+
+
+def _rescaled_range_hurst(
+    returns: np.ndarray,
+    subwindow_sizes: tuple[int, ...] = HURST_SUBWINDOW_SIZES,
+) -> float:
+    """Classic rescaled-range (R/S) Hurst exponent estimate (Mandelbrot & Wallis
+    1969), applied directly to a window of (already-stationary) per-bar `return`
+    values -- the standard financial/econophysics convention (e.g. Peters,
+    *Fractal Market Analysis*), rather than to raw non-stationary price levels.
+    H > 0.5 indicates persistent/trending behavior, H < 0.5 mean-reverting, H = 0.5
+    an uncorrelated (efficient-market-like) return series.
+
+    Splits `returns` into non-overlapping chunks at each size in `subwindow_sizes`,
+    averages R/S across same-size chunks, then fits the slope of log(mean R/S) vs
+    log(size) across scales -- more robust than reading R/S off a single window
+    size. Returns NaN if there's not enough data to fit at least two distinct
+    scales (can't determine a slope from fewer than two points).
+    """
+    n = len(returns)
+    log_sizes: list[float] = []
+    log_rs: list[float] = []
+    for size in subwindow_sizes:
+        if size > n or size < 2:
+            continue
+        n_chunks = n // size
+        rs_values = []
+        for i in range(n_chunks):
+            chunk = returns[i * size:(i + 1) * size]
+            deviations = np.cumsum(chunk - chunk.mean())
+            r = deviations.max() - deviations.min()
+            s = chunk.std()
+            if s > 0:
+                rs_values.append(r / s)
+        if rs_values:
+            log_sizes.append(np.log(size))
+            log_rs.append(np.log(np.mean(rs_values)))
+    if len(log_sizes) < 2:
+        return float("nan")
+    slope, _ = np.polyfit(log_sizes, log_rs, 1)
+    return float(slope)
+
+
+def add_rolling_hurst_feature(
+    df: DataFrame,
+    window_bars: int = HURST_WINDOW_BARS,
+    cols: FeatureColumns = FeatureColumns(),
+) -> DataFrame:
+    """Rolling Hurst exponent over a trailing window of `return` -- see
+    _rescaled_range_hurst. Causal by construction: the trailing window
+    (`rowsBetween(1-window_bars, 0)`) never includes a future bar, the same
+    convention every other rolling feature in this module already uses (e.g.
+    compute_moving_averages)."""
+    window_spec = (
+        Window.partitionBy(*cols.columns_partition).orderBy(*cols.columns_sort)
+        .rowsBetween(1 - window_bars, 0)
+    )
+    df = df.withColumn("_hurst_window", F.collect_list(F.col("return")).over(window_spec))
+
+    @F.pandas_udf(DoubleType())  # type: ignore[call-overload]  # pyspark stub gap, not a real type error
+    def _hurst(windows: pd.Series) -> pd.Series:
+        return pd.Series([_rescaled_range_hurst(np.asarray(w)) for w in windows], index=windows.index)
+
+    return df.withColumn("hurst_exponent", _hurst(F.col("_hurst_window"))).drop("_hurst_window")
+
+
 def add_targets(df: DataFrame, lookahead: int, cols: FeatureColumns = FeatureColumns()) -> DataFrame:
     window_spec = Window.partitionBy(*cols.columns_partition).orderBy(*cols.columns_sort)
 
@@ -367,10 +440,16 @@ def filter_incomplete_rows(
     lookahead: int,
     training_and_testing: bool,
     cols: FeatureColumns = FeatureColumns(),
+    min_history_bars: int = 0,
 ) -> DataFrame:
-    """Drop rows without a full moving-average history, and (when training) rows too
-    close to the end of the series to have a complete lookahead target."""
-    df = df.where(F.col("row_num") >= max(ma_lookback_list))
+    """Drop rows without a full moving-average (or other rolling-feature) history,
+    and (when training) rows too close to the end of the series to have a complete
+    lookahead target. `min_history_bars` lets a caller with a rolling window
+    longer than every ma_lookback_list entry (e.g. add_rolling_hurst_feature's
+    HURST_WINDOW_BARS) fold that requirement in too, rather than only ever
+    checking ma_lookback_list -- otherwise rows with a full MA history but an
+    incomplete Hurst window would silently pass this filter with a NaN feature."""
+    df = df.where(F.col("row_num") >= max(max(ma_lookback_list), min_history_bars))
     if training_and_testing:
         count = df.count()
         df = df.where(F.col("row_num") <= count - lookahead)
@@ -425,6 +504,7 @@ def engineer_features(
     training_and_testing: bool,
     cross_pair_usd_strength: DataFrame | None = None,
     daily_trend: pd.DataFrame | None = None,
+    include_hurst: bool = False,
     cols: FeatureColumns = FeatureColumns(),
 ) -> tuple[DataFrame, DataFrame, list[str]]:
     """Run the full Stage-1 pipeline on raw candles.
@@ -442,6 +522,10 @@ def engineer_features(
     `daily_trend` is likewise optional (default None, meaning skip) -- this
     pair's OWN daily-bar trend/volatility, assembled by the caller via
     prepare_data_flow.py's pull_daily_trend_task, see add_daily_timeframe_features.
+
+    `include_hurst` adds a rolling Hurst exponent (see add_rolling_hurst_feature) --
+    no external data needed (pure function of this pair's own `return` column), so
+    unlike the two flags above this is a plain bool, not an optional DataFrame/pdf.
     """
     df = add_calendar_features(df, cols)
     df = add_session_features(df, cols)
@@ -450,13 +534,16 @@ def engineer_features(
         df = add_cross_pair_features(df, cross_pair_usd_strength, cols)
     if daily_trend is not None:
         df = add_daily_timeframe_features(df, daily_trend, cols)
+    if include_hurst:
+        df = add_rolling_hurst_feature(df, cols=cols)
     df = add_targets(df, lookahead, cols)
     df = drop_raw_price_columns(df, columns_base, training_and_testing, cols)
     df = add_row_number(df, cols)
     df = compute_moving_averages(df, ma_lookback_list, ma_columns_list, cols)
     df = add_volatility_regime_features(df, ma_lookback_list, cols)
     df = add_momentum_features(df, ma_lookback_list, cols)
-    df = filter_incomplete_rows(df, ma_lookback_list, lookahead, training_and_testing, cols)
+    min_history_bars = HURST_WINDOW_BARS if include_hurst else 0
+    df = filter_incomplete_rows(df, ma_lookback_list, lookahead, training_and_testing, cols, min_history_bars)
 
     df_non_time_series, columns_x = select_xy_columns(df, cols)
     df_time_series = window_into_arrays(df_non_time_series, columns_x, n_back, cols)

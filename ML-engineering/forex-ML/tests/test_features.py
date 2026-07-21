@@ -8,10 +8,13 @@ import pyspark.sql.functions as F
 import pytest
 
 from forex_ml.data.features import (
+    HURST_WINDOW_BARS,
+    _rescaled_range_hurst,
     add_calendar_features,
     add_cross_pair_features,
     add_daily_timeframe_features,
     add_market_features,
+    add_rolling_hurst_feature,
     add_session_features,
     add_targets,
     compute_cross_pair_usd_strength,
@@ -274,3 +277,63 @@ def test_add_daily_timeframe_features_is_nan_before_any_daily_bar_has_closed(spa
     result = add_daily_timeframe_features(h1, daily_trend).toPandas()
 
     assert pd.isna(result["daily_return_ma"].iloc[0])
+
+
+def test_rescaled_range_hurst_is_low_for_a_mean_reverting_alternating_series():
+    """Strictly alternating +1/-1 returns: cumulative deviation from the mean
+    oscillates in a tight, bounded range regardless of window size, so R/S grows
+    much slower than the window size -- a clearly mean-reverting (H well below 0.5)
+    signature."""
+    returns = np.tile([1.0, -1.0], 50)
+    h = _rescaled_range_hurst(returns)
+    assert h < 0.4
+
+
+def test_rescaled_range_hurst_is_high_for_a_strongly_trending_series():
+    """A run-persistence process (the sign of each return only flips with 5%
+    probability, so the same direction persists for long stretches, unlike i.i.d.
+    noise) -- R/S analysis measures deviation from each chunk's OWN mean, so a
+    plain constant drift doesn't work as a test case here (it gets absorbed into
+    the per-chunk mean and cancelled out); genuine autocorrelation in the sign of
+    returns is what R/S actually detects as persistence."""
+    rng = np.random.default_rng(0)
+    n = 100
+    signs = np.empty(n)
+    signs[0] = 1.0
+    for i in range(1, n):
+        signs[i] = -signs[i - 1] if rng.random() < 0.05 else signs[i - 1]
+    returns = signs * (1.0 + rng.normal(0, 0.1, size=n).clip(-0.5, 0.5))
+    h = _rescaled_range_hurst(returns)
+    assert h > 0.7
+
+
+def test_rescaled_range_hurst_is_near_half_for_iid_noise():
+    rng = np.random.default_rng(0)
+    returns = rng.normal(0, 1, size=100)
+    h = _rescaled_range_hurst(returns)
+    assert 0.3 < h < 0.75
+
+
+def test_rescaled_range_hurst_is_nan_with_too_little_data_for_two_scales():
+    # Only the smallest configured sub-window size (10) fits at all -- one scale
+    # isn't enough to fit a log-log slope.
+    h = _rescaled_range_hurst(np.arange(15.0))
+    assert np.isnan(h)
+
+
+def test_add_rolling_hurst_feature_is_nan_before_the_window_fills_and_populated_after(spark):
+    n = HURST_WINDOW_BARS + 10
+    rng = np.random.default_rng(0)
+    df = spark.createDataFrame(pd.DataFrame({
+        "instrument": "EUR/USD", "granularity": "H1",
+        "unix_epoch_s": np.arange(n) * 3600,
+        "return": rng.normal(0, 1, size=n),
+    }))
+
+    result = add_rolling_hurst_feature(df).orderBy("unix_epoch_s").toPandas()
+
+    # Fewer than HURST_WINDOW_BARS-1 PRIOR bars exist for the earliest rows (the
+    # window includes the current row, so row index HURST_WINDOW_BARS-1 is the
+    # first with a full window) -- expect NaN before that point, a real value after.
+    assert pd.isna(result["hurst_exponent"].iloc[0])
+    assert not pd.isna(result["hurst_exponent"].iloc[-1])

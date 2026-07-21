@@ -141,6 +141,7 @@ def engineer_and_save_task(
         training_and_testing=params.training_and_testing,
         cross_pair_usd_strength=cross_pair_usd_strength,
         daily_trend=daily_trend,
+        include_hurst=params.include_hurst,
     )
 
     key = pair_key(instrument, granularity, params.n_back, params.lookahead)

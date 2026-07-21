@@ -37,6 +37,10 @@ class FeatureParams(BaseModel):
     # never actually produces for any pair that leaves this False, exactly the
     # silent-drift risk this property exists to prevent.
     include_daily_trend: bool = False
+    # Same opt-in reasoning as include_daily_trend above -- hurst_exponent is only
+    # actually produced by Stage 1 when engineer_features(include_hurst=True) is
+    # used, so it can't be listed unconditionally either.
+    include_hurst: bool = False
 
     @property
     def engineered_columns(self) -> set[str]:
@@ -49,6 +53,8 @@ class FeatureParams(BaseModel):
         }
         if self.include_daily_trend:
             columns |= {"daily_return_ma", "daily_volatility_ma"}
+        if self.include_hurst:
+            columns.add("hurst_exponent")
         for lookback in self.ma_lookback_list:
             for column in self.ma_columns_list:
                 columns.add(f"{column}_MA_{lookback}")
