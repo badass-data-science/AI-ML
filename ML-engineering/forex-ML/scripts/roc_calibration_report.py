@@ -17,7 +17,9 @@ from __future__ import annotations
 import argparse
 
 import numpy as np
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.frozen import FrozenEstimator
 
 from forex_ml.config import load_params
 from forex_ml.data.splitting import TimeSeriesSplitter, load_and_stack
@@ -35,10 +37,16 @@ def main() -> None:
     parser.add_argument("--instrument", required=True, help="e.g. USD/CHF")
     parser.add_argument("--granularity", required=True, help="e.g. H1")
     parser.add_argument("--output-dir", default=".", help="Where to write the two PNG plots (default: cwd)")
+    parser.add_argument("--proba-calibration", choices=["sigmoid", "isotonic"], default=None,
+                         help="Post-hoc predict_proba calibration, fit on each fold's val split held "
+                              "genuinely out of the base classifier's own training. Default: none, "
+                              "raw predict_proba (matches every prior report run).")
     parser.add_argument("--spark-memory", default="24g")
     args = parser.parse_args()
 
     label = args.instrument.replace("/", "_")
+    if args.proba_calibration:
+        label = f"{label}_{args.proba_calibration}"
     spark = build_spark_session(f"forex-ml-roc-calibration-{label}", memory=args.spark_memory)
 
     params = load_params(args.params)
@@ -84,11 +92,17 @@ def main() -> None:
         y_test = np.argmax(fold_splits.test["y"], axis=1)
 
         clf = HistGradientBoostingClassifier(random_state=0, early_stopping=True, validation_fraction=0.15)
-        X_fit = np.concatenate([X_train, X_val], axis=0)
-        y_fit = np.concatenate([y_train, y_val], axis=0)
-        clf.fit(X_fit, y_fit)
 
-        y_proba = clf.predict_proba(X_test)
+        if args.proba_calibration is None:
+            X_fit = np.concatenate([X_train, X_val], axis=0)
+            y_fit = np.concatenate([y_train, y_val], axis=0)
+            clf.fit(X_fit, y_fit)
+            y_proba = clf.predict_proba(X_test)
+        else:
+            clf.fit(X_train, y_train)
+            calibrated_clf = CalibratedClassifierCV(FrozenEstimator(clf), method=args.proba_calibration)
+            calibrated_clf.fit(X_val, y_val)
+            y_proba = calibrated_clf.predict_proba(X_test)
         acc = (np.argmax(y_proba, axis=1) == y_test).mean()
         fold_accs.append(acc)
         print(f"Fold {fold_idx}: test_accuracy={acc:.4f}", flush=True)
@@ -100,10 +114,11 @@ def main() -> None:
     y_proba_all = np.concatenate(pooled_y_proba)
     print(f"\nmean fold accuracy = {np.mean(fold_accs):.4f}  (pooled n={len(y_test_all)})", flush=True)
 
+    calibration_label = args.proba_calibration or "none"
     roc_path = f"{args.output_dir}/{label}_roc.png"
     calibration_path = f"{args.output_dir}/{label}_calibration.png"
-    plot_multiclass_roc(y_test_all, y_proba_all, CLASS_NAMES, title=f"{args.instrument}: ROC (pooled across folds)", output_path=roc_path)
-    plot_calibration_curve(y_test_all, y_proba_all, CLASS_NAMES, n_bins=10, title=f"{args.instrument}: calibration (pooled across folds)", output_path=calibration_path)
+    plot_multiclass_roc(y_test_all, y_proba_all, CLASS_NAMES, title=f"{args.instrument}: ROC (pooled across folds, proba_calibration={calibration_label})", output_path=roc_path)
+    plot_calibration_curve(y_test_all, y_proba_all, CLASS_NAMES, n_bins=10, title=f"{args.instrument}: calibration (pooled across folds, proba_calibration={calibration_label})", output_path=calibration_path)
     print(f"\nSaved plots to {roc_path} and {calibration_path}", flush=True)
 
 

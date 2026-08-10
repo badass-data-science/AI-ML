@@ -12,7 +12,8 @@ dependencies = [
     "tensorflow[and-cuda]>=2.16",
     "keras>=3.0",
     "forex-ml-training",
-    "forex-etl",
+    "etl-forex-time-series-data",
+    "trade-simulator",
 ]
 
 [project.optional-dependencies]
@@ -25,7 +26,8 @@ dev = [
 
 [tool.uv.sources]
 forex-ml-training = { path = "../forex-ML", editable = true }
-forex-etl = { path = "../../../Data-Science/Data-Engineering/ETL", editable = true }
+etl-forex-time-series-data = { path = "../../../../ETL-forex-time-series-data", editable = true }
+trade-simulator = { path = "../../../../forex-trade-simulation-inator", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

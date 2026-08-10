@@ -5,7 +5,7 @@ diversification -- low/negative correlation between pairs' daily P&L) or just
 compounds the same risk (correlation near +1).
 
 Usage (run from forex-strategy's directory/venv -- imports forex_strategy.backtest
-and forex_strategy.portfolio):
+and trade_simulator.backtest/trade_simulator.portfolio):
     cd ../forex-strategy
     uv run python ../forex-ML/scripts/portfolio_backtest.py \\
         --params USD/CHF=<path> USD/JPY=<path> --weights USD/CHF=0.5 USD/JPY=0.5 \\
@@ -34,14 +34,16 @@ from forex_ml.data.swap_rates import resolve_swap_cost_pct_per_night
 from forex_ml.paths import non_time_series_parquet_path, pair_key, time_series_parquet_path
 from forex_ml.spark_session import build_spark_session
 
-from forex_strategy.backtest import predicted_classes_to_positions, simulate_trades
-from forex_strategy.portfolio import (
+from trade_simulator.backtest import simulate_trades
+from trade_simulator.portfolio import (
     bucket_trades_by_day,
     combine_portfolio_daily_pnl,
     max_drawdown,
     pairwise_correlation,
     sharpe_ratio,
 )
+
+from forex_strategy.backtest import predicted_classes_to_positions
 
 GRANULARITY = "H1"
 SEED = 0

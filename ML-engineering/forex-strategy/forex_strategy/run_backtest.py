@@ -17,13 +17,9 @@ import tempfile
 from forex.eda.eda_config.eda_config import granularity_to_seconds_map
 from forex_ml.data.swap_rates import resolve_swap_cost_pct_per_night
 from mlflow.tracking import MlflowClient
+from trade_simulator.backtest import BacktestResult, position_size_from_realized_volatility, simulate_trades
 
-from forex_strategy.backtest import (
-    BacktestResult,
-    position_size_from_realized_volatility,
-    predicted_classes_to_positions,
-    simulate_trades,
-)
+from forex_strategy.backtest import predicted_classes_to_positions
 from forex_strategy.model_registry import find_model_version, load_test_predictions
 
 

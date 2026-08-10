@@ -15,7 +15,7 @@ dependencies = [
     "pyyaml>=6.0",
     "statsmodels>=0.14",
     "scikit-learn>=1.4",
-    "forex-etl",
+    "etl-forex-time-series-data",
     "python-tools-and-shortcuts",
 ]
 
@@ -29,7 +29,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-forex-etl = { path = "../../../Data-Science/Data-Engineering/ETL", editable = true }
+etl-forex-time-series-data = { path = "../../../../ETL-forex-time-series-data", editable = true }
 python-tools-and-shortcuts = { path = "../../../python-tools-and-shortcuts", editable = true }
 
 [tool.pytest.ini_options]

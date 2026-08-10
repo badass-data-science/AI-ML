@@ -1,8 +1,8 @@
 """Formal pair-screening protocol, runnable against any (instrument, granularity,
 params) combination -- see forex_ml.evaluation.pair_screening for the rationale.
 
-Usage (run from forex-strategy's own directory/venv -- needs forex_strategy.backtest,
-see below):
+Usage (run from forex-strategy's own directory/venv -- needs forex_strategy.backtest
+and trade_simulator.backtest, see below):
     cd ../forex-strategy
     uv run python ../forex-ML/scripts/screen_pair.py \\
         --params params.yaml --instrument AUD/NZD --granularity H1 \\
@@ -25,8 +25,11 @@ Protocol, in order:
    that passed step 3 -- a pair whose result depends on getting lucky with one
    seed is a materially weaker candidate than one that holds up broadly.
 
-Requires forex_strategy.backtest (predicted_classes_to_positions, simulate_trades)
--- run this from forex-strategy's directory so both packages are importable, the
+Requires forex_strategy.backtest.predicted_classes_to_positions (forex-ML-
+specific: translates a 3-class prediction into a position) and
+trade_simulator.backtest.simulate_trades (model-agnostic: positions -> P&L,
+see github.com/badass-data-science/forex-trade-simulation-inator) -- run this
+from forex-strategy's directory so all three packages are importable, the
 same convention used by every other multi-window script this project has run.
 """
 
@@ -35,7 +38,9 @@ from __future__ import annotations
 import argparse
 
 import numpy as np
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.frozen import FrozenEstimator
 
 from forex_ml.config import load_params
 from forex_ml.data.splitting import TimeSeriesSplitter, load_and_stack
@@ -48,7 +53,9 @@ from forex_ml.evaluation.pair_screening import (
 from forex_ml.paths import non_time_series_parquet_path, pair_key, time_series_parquet_path
 from forex_ml.spark_session import build_spark_session
 
-from forex_strategy.backtest import predicted_classes_to_positions, simulate_trades
+from trade_simulator.backtest import simulate_trades
+
+from forex_strategy.backtest import predicted_classes_to_positions
 
 DEFAULT_SEEDS = [0, 7, 17, 54, 100, 2026]
 CONFIDENCE_THRESHOLDS = [0.0, 0.40, 0.45, 0.50, 0.55]
@@ -82,7 +89,9 @@ def _build_folds(spark, params, instrument: str, granularity: str):
     return folds, splitter
 
 
-def _fold_simulation_results(folds, granularity_seconds: float, seed: int) -> dict[float, list]:
+def _fold_simulation_results(
+    folds, granularity_seconds: float, seed: int, calibrate: str | None = None,
+) -> dict[float, list]:
     results_by_threshold: dict[float, list] = {thr: [] for thr in CONFIDENCE_THRESHOLDS}
     for fold_splits in folds:
         n_train, n_back, n_features = fold_splits.train["M"].shape
@@ -93,11 +102,20 @@ def _fold_simulation_results(folds, granularity_seconds: float, seed: int) -> di
         y_val = np.argmax(fold_splits.val["y"], axis=1)
 
         clf = HistGradientBoostingClassifier(random_state=seed, early_stopping=True, validation_fraction=0.15)
-        X_fit = np.concatenate([X_train, X_val], axis=0)
-        y_fit = np.concatenate([y_train, y_val], axis=0)
-        clf.fit(X_fit, y_fit)
 
-        pred_proba = clf.predict_proba(X_test)
+        if calibrate is None:
+            X_fit = np.concatenate([X_train, X_val], axis=0)
+            y_fit = np.concatenate([y_train, y_val], axis=0)
+            clf.fit(X_fit, y_fit)
+            pred_proba = clf.predict_proba(X_test)
+        else:
+            # val must stay genuinely unseen by the base fit -- calibrating
+            # against predictions the model already memorized would understate
+            # how overconfident it really is on data it hasn't seen.
+            clf.fit(X_train, y_train)
+            calibrated_clf = CalibratedClassifierCV(FrozenEstimator(clf), method=calibrate)
+            calibrated_clf.fit(X_val, y_val)
+            pred_proba = calibrated_clf.predict_proba(X_test)
         entry_timestamp = fold_splits.test["timestamp"]
         long_exit_timestamp = entry_timestamp + fold_splits.test["long_exit_bar_offset"] * granularity_seconds
         short_exit_timestamp = entry_timestamp + fold_splits.test["short_exit_bar_offset"] * granularity_seconds
@@ -126,6 +144,11 @@ def main() -> None:
                               "median move over max_holding_bars, ignoring the params file's values")
     parser.add_argument("--seeds", default=",".join(str(s) for s in DEFAULT_SEEDS),
                          help="Comma-separated seeds for the stability check")
+    parser.add_argument("--proba-calibration", choices=["sigmoid", "isotonic"], default=None,
+                         help="Post-hoc predict_proba calibration (Platt/sigmoid or isotonic), fit on "
+                              "each fold's val split, held genuinely out of the base classifier's own "
+                              "training -- unrelated to --auto-calibrate, which tunes barrier pct, not "
+                              "probabilities. Default: no calibration (matches every prior screening run).")
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--spark-memory", default="24g")
     args = parser.parse_args()
@@ -170,12 +193,13 @@ def main() -> None:
         params.split.stop_loss_pct = calibrated_pct
 
     print(f"\n{'=' * 70}\nSCREENING {args.instrument} {args.granularity}  "
-          f"(profit_take_pct={params.split.profit_take_pct}, stop_loss_pct={params.split.stop_loss_pct})\n{'=' * 70}", flush=True)
+          f"(profit_take_pct={params.split.profit_take_pct}, stop_loss_pct={params.split.stop_loss_pct}, "
+          f"proba_calibration={args.proba_calibration})\n{'=' * 70}", flush=True)
 
     folds, _ = _build_folds(spark, params, args.instrument, args.granularity)
     print(f"Got {len(folds)} folds", flush=True)
 
-    seed0_results = _fold_simulation_results(folds, granularity_seconds, seed=0)
+    seed0_results = _fold_simulation_results(folds, granularity_seconds, seed=0, calibrate=args.proba_calibration)
     pooled = {thr: pool_fold_results(thr, results) for thr, results in seed0_results.items()}
     for thr, r in sorted(pooled.items()):
         print(f"  conf={thr:.2f}  trades={r.total_trades:5d}  win_rate={r.pooled_win_rate:.3f}  "
@@ -190,7 +214,7 @@ def main() -> None:
         print(f"\n{'=' * 70}\nSEED-STABILITY CHECK (seeds={seeds})\n{'=' * 70}", flush=True)
         seed_pass_counts = {thr: 0 for thr in verdict.passing_thresholds}
         for seed in seeds:
-            seed_results = _fold_simulation_results(folds, granularity_seconds, seed=seed)
+            seed_results = _fold_simulation_results(folds, granularity_seconds, seed=seed, calibrate=args.proba_calibration)
             seed_pooled = {thr: pool_fold_results(thr, results) for thr, results in seed_results.items()}
             seed_verdict = evaluate_screening_verdict(
                 {thr: seed_pooled[thr] for thr in verdict.passing_thresholds}, alpha=args.alpha,
