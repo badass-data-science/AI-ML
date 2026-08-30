@@ -9,6 +9,3 @@ uv.lock
 
 # forex-strategy commits its lockfile deliberately for build reproducibility
 !ML-engineering/forex-strategy/uv.lock
-
-# forex-execution commits its lockfile deliberately for build reproducibility
-!ML-engineering/forex-execution/uv.lock
