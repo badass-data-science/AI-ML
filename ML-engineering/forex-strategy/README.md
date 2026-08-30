@@ -32,6 +32,12 @@ path-dependencies (see `[tool.uv.sources]` in `pyproject.toml`), so this repo mu
 checked out as a sibling of both `forex-ML` and `Data-Science/Data-Engineering/ETL`
 for `uv sync` to resolve them.
 
+`screen_pair.py`/`portfolio_backtest.py` in forex-ML are meant to be run from this
+directory so all three packages (forex-ML, forex-strategy, trade-simulator) are
+importable at once, which means this directory needs the same Spark-friendly Java
+as forex-ML — see forex-ML's README, "Spark / Java version". A matching `.envrc`
+(gitignored, host-specific) is here too; run `direnv allow` once after checkout.
+
 ## Finding and loading a model
 
 Every (instrument, granularity, config) trains under the same shared registered-model

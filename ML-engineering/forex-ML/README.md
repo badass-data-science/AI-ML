@@ -159,6 +159,24 @@ Should print `[PhysicalDevice(name='/physical_device:GPU:0', device_type='GPU')]
 `[]`. This is a standard consequence of pip-installed (rather than system) CUDA on
 Linux, not specific to this project's setup.
 
+### Spark / Java version
+
+PySpark needs a JDK Spark actually supports; a too-new system-default `java` (e.g.
+Java 25 via `update-alternatives`) will break `build_spark_session`. Rather than
+changing the system-wide default, this repo pins `JAVA_HOME` to a known-good JDK
+(17) scoped to this directory only, via [direnv](https://direnv.net/):
+
+```bash
+sudo apt-get install direnv
+eval "$(direnv hook bash)"   # add to ~/.bashrc, then open a new shell
+```
+
+`.envrc` here sets `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64` and is gitignored
+(the path is host-specific) — run `direnv allow` once after checking out the repo,
+or after editing `.envrc`, to trust it. `cd`ing into this directory then
+automatically switches `java`/`JAVA_HOME`; `cd`ing back out restores whatever's
+globally configured.
+
 ## Configuration
 
 Everything the pipeline needs — instrument/granularity lists, feature-engineering
