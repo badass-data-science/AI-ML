@@ -6,7 +6,8 @@ and trade_simulator.backtest, see below):
     cd ../forex-strategy
     uv run python ../forex-ML/scripts/screen_pair.py \\
         --params params.yaml --instrument AUD/NZD --granularity H1 \\
-        [--auto-calibrate] [--seeds 0,7,17,54,100,2026] [--alpha 0.05]
+        [--auto-calibrate] [--seeds 0,7,17,54,100,2026] [--alpha 0.05] \\
+        [--min-timestamp 2023-01-01]
 
 Protocol, in order:
 1. (Optional, --auto-calibrate) Calibrate profit_take_pct/stop_loss_pct from the
@@ -14,7 +15,13 @@ Protocol, in order:
    threshold or a hand-picked guess.
 2. Multi-window backtest: 5 sliding-window folds (10000/2000/2000 bars, purged),
    HistGradientBoostingClassifier(random_state=0), pooled across all 5 folds' test
-   rows, at 5 confidence thresholds.
+   rows, at 5 confidence thresholds. Folds are always anchored at the EARLIEST
+   timestamp present in the data and step forward a small, fixed number of bars
+   each -- with these fold sizes that's only ~2.5 years of coverage, so on an
+   unfiltered multi-year Stage-1 file the folds sit wherever the data happens to
+   start (e.g. 2016-2017 for a pair whose Stage 1 starts at
+   min_training_timestamp=2015-01-01), NOT anywhere near "now". Pass
+   --min-timestamp to validate against a recent window instead.
 3. Verdict: does any threshold clear Benjamini-Hochberg-corrected significance
    (win-rate OR per-trade payoff-asymmetry path) with positive pooled net P&L?
    Deliberately does NOT gate on single-window accuracy or a regime-shift check
@@ -36,6 +43,7 @@ same convention used by every other multi-window script this project has run.
 from __future__ import annotations
 
 import argparse
+import datetime
 
 import numpy as np
 from sklearn.calibration import CalibratedClassifierCV
@@ -61,7 +69,27 @@ DEFAULT_SEEDS = [0, 7, 17, 54, 100, 2026]
 CONFIDENCE_THRESHOLDS = [0.0, 0.40, 0.45, 0.50, 0.55]
 
 
-def _build_folds(spark, params, instrument: str, granularity: str):
+def _parse_min_timestamp(raw: str) -> float:
+    """Accepts either a unix-epoch-seconds float or an ISO date/datetime string,
+    matching how `feature.min_training_timestamp` is already interpreted elsewhere
+    in this project (naive local time, not UTC)."""
+    try:
+        return float(raw)
+    except ValueError:
+        return datetime.datetime.fromisoformat(raw).timestamp()
+
+
+def _build_folds(spark, params, instrument: str, granularity: str, min_timestamp: float | None = None):
+    """`min_timestamp` (unix epoch seconds), if given, drops every row strictly
+    before it BEFORE folds are built. This matters because `rolling_folds`'s
+    "sliding" window always anchors fold 0 at the EARLIEST timestamp remaining in
+    the frame and steps forward a small, fixed number of bars per fold -- with
+    n_folds=5 and test_bars=2000 (~83 H1 days/fold), the 5 folds only ever cover
+    ~2.5 years from wherever they start. Left unfiltered, that's always the first
+    ~2.5 years of whatever's in Stage 1 (e.g. 2016-2017 for a pair whose Stage 1
+    starts at min_training_timestamp=2015-01-01) -- NEVER anywhere near "now",
+    no matter how much more recent data Stage 1 actually contains. Pass a recent
+    cutoff to validate against current market conditions instead."""
     key = pair_key(instrument, granularity, params.feature.n_back, params.feature.lookahead)
     pdf, pdf_non_time_series = load_and_stack(
         spark,
@@ -69,6 +97,9 @@ def _build_folds(spark, params, instrument: str, granularity: str):
         str(non_time_series_parquet_path(params.feature.output_dir, key)),
         params.split.columns_x,
     )
+    if min_timestamp is not None:
+        pdf = pdf[pdf["unix_epoch_s"] >= min_timestamp].reset_index(drop=True)
+        pdf_non_time_series = pdf_non_time_series[pdf_non_time_series["unix_epoch_s"] >= min_timestamp].reset_index(drop=True)
     resolved_long_swap, resolved_short_swap = resolve_swap_cost_pct_per_night(
         instrument, params.split.swap_cost_pct_per_night,
     )
@@ -142,6 +173,12 @@ def main() -> None:
     parser.add_argument("--auto-calibrate", action="store_true",
                          help="Recompute profit_take_pct/stop_loss_pct from this pair's own real "
                               "median move over max_holding_bars, ignoring the params file's values")
+    parser.add_argument("--min-timestamp", default=None,
+                         help="ISO date (e.g. 2023-01-01) or unix-epoch-seconds float. Drops rows "
+                              "before this BEFORE folds are built, so the 5 folds are anchored here "
+                              "instead of at Stage 1's earliest bar -- use to validate against recent "
+                              "market conditions rather than whatever period the data happens to start "
+                              "at (see _build_folds docstring).")
     parser.add_argument("--seeds", default=",".join(str(s) for s in DEFAULT_SEEDS),
                          help="Comma-separated seeds for the stability check")
     parser.add_argument("--proba-calibration", choices=["sigmoid", "isotonic"], default=None,
@@ -153,6 +190,7 @@ def main() -> None:
     parser.add_argument("--spark-memory", default="24g")
     args = parser.parse_args()
     seeds = [int(s) for s in args.seeds.split(",")]
+    min_timestamp = _parse_min_timestamp(args.min_timestamp) if args.min_timestamp is not None else None
 
     from forex.eda.eda_config.eda_config import granularity_to_seconds_map
     granularity_seconds = float(granularity_to_seconds_map[args.granularity])
@@ -192,11 +230,14 @@ def main() -> None:
         params.split.profit_take_pct = calibrated_pct
         params.split.stop_loss_pct = calibrated_pct
 
+    min_ts_label = (
+        datetime.datetime.fromtimestamp(min_timestamp).isoformat() if min_timestamp is not None else "earliest available"
+    )
     print(f"\n{'=' * 70}\nSCREENING {args.instrument} {args.granularity}  "
           f"(profit_take_pct={params.split.profit_take_pct}, stop_loss_pct={params.split.stop_loss_pct}, "
-          f"proba_calibration={args.proba_calibration})\n{'=' * 70}", flush=True)
+          f"proba_calibration={args.proba_calibration}, folds anchored from={min_ts_label})\n{'=' * 70}", flush=True)
 
-    folds, _ = _build_folds(spark, params, args.instrument, args.granularity)
+    folds, _ = _build_folds(spark, params, args.instrument, args.granularity, min_timestamp=min_timestamp)
     print(f"Got {len(folds)} folds", flush=True)
 
     seed0_results = _fold_simulation_results(folds, granularity_seconds, seed=0, calibrate=args.proba_calibration)
