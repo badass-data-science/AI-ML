@@ -64,6 +64,17 @@ RECENT_CUTOFF = datetime.date(2023, 1, 1)
 
 
 def load_daily_returns() -> pd.DataFrame:
+    """One column per pair, one row per date. Rows where even ONE pair is
+    missing are dropped entirely (not silently averaged over whichever pairs
+    happen to be present) -- an "equal-weighted 7-pair basket" isn't a
+    well-defined quantity for a day where fewer than 7 pairs reported, and
+    `.mean(axis=1)` skipping NaN by default would otherwise silently reweight
+    the basket day to day without any visibility into how often that
+    happens. Currently a no-op in practice (real InfluxDB data has exactly
+    one NaN row per pair, all on the same shared first date, from
+    `pct_change()`'s lack of a prior value there) -- but explicit and
+    reported rather than relied on by luck, since a future InfluxDB gap or
+    an added pair could easily introduce a genuine partial-missing row."""
     min_ts = int(datetime.datetime(2015, 1, 1).timestamp())
     max_ts = int(datetime.datetime.now().timestamp())
     returns = {}
@@ -72,7 +83,18 @@ def load_daily_returns() -> pd.DataFrame:
         df["date"] = pd.to_datetime(df["unix_epoch_s"], unit="s").dt.date
         df = df.drop_duplicates("date").set_index("date")
         returns[pair] = df["mid_close"].pct_change()
-    return pd.DataFrame(returns).sort_index()
+    returns_df = pd.DataFrame(returns).sort_index()
+
+    incomplete = returns_df.isna().any(axis=1)
+    partial = incomplete & ~returns_df.isna().all(axis=1)
+    if partial.any():
+        print(f"WARNING: {partial.sum()} date(s) have SOME but not all pairs missing -- "
+              f"dropping them entirely rather than silently reweighting the basket: "
+              f"{returns_df.index[partial].tolist()[:10]}{'...' if partial.sum() > 10 else ''}")
+    if incomplete.any():
+        print(f"load_daily_returns: dropping {incomplete.sum()} of {len(returns_df)} date(s) "
+              f"with at least one missing pair")
+    return returns_df.dropna()
 
 
 def report(label: str, df: pd.DataFrame) -> None:

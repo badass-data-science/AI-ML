@@ -46,6 +46,15 @@ baseline series specifically (not whichever overlay's own returns), so
 there's no circular feedback loop where de-risking changes the very signal
 deciding whether to de-risk.
 
+Also sweeps DRAWDOWN_TRIGGER_SWEEP for the hybrid overlay -- a ROBUSTNESS
+check, not a search for the best number. Picking whichever single threshold
+looks best on this exact recent-period window and reporting only that would
+be in-sample tuning on the same data already used to validate the underlying
+correlation -- a real risk given how narrow that window is (~3.7 years). The
+sweep instead asks: does performance hold up across a RANGE of nearby
+thresholds (real, broad effect) or spike at one lucky value (likely noise)?
+Report the whole table, not just whichever row is best.
+
 Run from forex-ML/ with forex-strategy's venv:
     uv run --project ../forex-strategy python scripts/backtest_density_risk_overlay.py
 """
@@ -64,6 +73,7 @@ ROLLING_MIN_PERIODS = 60
 RECENT_CUTOFF = datetime.date(2023, 1, 1)
 TRADING_DAYS_PER_YEAR = 252
 DRAWDOWN_TRIGGER_PCT = 1.5  # percentage points of the baseline's own cumulative return
+DRAWDOWN_TRIGGER_SWEEP = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
 
 
 def rolling_percentile(series: pd.Series, window: int, min_periods: int) -> pd.Series:
@@ -80,6 +90,37 @@ def exposure_from_percentile(pct: pd.Series) -> pd.Series:
     exposure[pct >= 0.80] = 0.25
     exposure[pct.isna()] = np.nan  # not enough history yet to classify -- excluded, not defaulted to full size
     return exposure
+
+
+def restrict_to_network_dates(basket_ret: pd.Series, density: pd.DataFrame) -> pd.Series:
+    """Restricts `basket_ret` to dates fx-pcn's own network actually fits on --
+    the Daily InfluxDB candles used for the naive basket include Sunday
+    entries (a data artifact, not a real trading day the network ever
+    evaluates); leaving them in let a rule that doesn't strictly require
+    same-day network output (the hybrid overlay's default 1.0x branch)
+    silently include phantom days a stricter rule (the predictive overlay,
+    always gated on that day's fit) excluded -- a real, confirmed
+    inconsistency between two supposedly-comparable computations, not just
+    noise (see this session's memory for how this was found).
+
+    Normalizes both indices to the same type before comparing rather than
+    relying on both happening to already use plain `datetime.date` objects
+    (true today, but a future pandas/pyarrow version or a schema tweak
+    upstream could silently change that and produce a near-empty, wrong-
+    looking overlap with no error) -- and raises loudly if the resulting
+    overlap looks implausibly small, rather than silently continuing on a
+    near-empty series."""
+    basket_dates = pd.to_datetime(basket_ret.index)
+    network_dates = pd.to_datetime(density.index)
+    restricted = basket_ret.set_axis(basket_dates)[basket_dates.isin(network_dates)]
+    restricted.index = restricted.index.date
+    if len(restricted) < 0.5 * len(density):
+        raise ValueError(
+            f"Only {len(restricted)} of {len(density)} network fit dates found in the basket's own "
+            f"date range -- date alignment likely broken (index dtype mismatch, wrong date range, "
+            f"or a real data gap), not just normal weekend/holiday sparsity."
+        )
+    return restricted
 
 
 def hybrid_exposure(basket_ret: pd.Series, pct: pd.Series, drawdown_trigger_pct: float) -> pd.Series:
@@ -151,6 +192,7 @@ def print_summary(rows: list[dict]) -> None:
 def run_for_regime(regime_label: str, density_path: str, returns: pd.DataFrame, basket_ret: pd.Series) -> None:
     print(f"\n{'#' * 70}\n# REGIME: {regime_label}\n{'#' * 70}")
     density = pd.read_parquet(density_path).set_index("date").sort_index()
+    basket_ret = restrict_to_network_dates(basket_ret, density)
 
     pct = rolling_percentile(density["mean_abs_partial_corr"], ROLLING_WINDOW_DAYS, ROLLING_MIN_PERIODS)
     predictive_exposure_raw = exposure_from_percentile(pct)
@@ -197,12 +239,44 @@ def run_for_regime(regime_label: str, density_path: str, returns: pd.DataFrame, 
         print(f"\nRECENT (2023+): too few rows (n={len(recent)}), skipping")
 
 
+def sweep_drawdown_thresholds(regime_label: str, density_path: str, basket_ret: pd.Series) -> None:
+    print(f"\n{'=' * 70}\nDRAWDOWN-TRIGGER SWEEP: {regime_label} (robustness check, not tuning)\n{'=' * 70}")
+    density = pd.read_parquet(density_path).set_index("date").sort_index()
+    basket_ret = restrict_to_network_dates(basket_ret, density)
+    pct = rolling_percentile(density["mean_abs_partial_corr"], ROLLING_WINDOW_DAYS, ROLLING_MIN_PERIODS)
+
+    def rows_for_period(mask_recent: bool) -> list[dict]:
+        # Baseline is recomputed per-threshold, restricted to that threshold's
+        # exact date overlap -- an apples-to-apples n_days comparison per row,
+        # since which days get excluded (not enough rolling history, or
+        # triggered-but-severity-unknown) can differ very slightly by threshold.
+        rows = []
+        for threshold in DRAWDOWN_TRIGGER_SWEEP:
+            hybrid_lagged = hybrid_exposure(basket_ret, pct, threshold).shift(1)
+            combined = pd.DataFrame({"basket_ret": basket_ret, "hybrid": hybrid_lagged}).dropna()
+            if mask_recent:
+                combined = combined[combined.index >= RECENT_CUTOFF]
+            if len(combined) < 50:
+                continue
+            if not rows:
+                rows.append(summarize("baseline (1.0x always)", combined["basket_ret"]))
+            rows.append(summarize(f"trigger={threshold}pp", combined["basket_ret"] * combined["hybrid"]))
+        return rows
+
+    print(f"\n{'FULL HISTORY':}")
+    print_summary(rows_for_period(mask_recent=False))
+
+    print(f"\n{'RECENT (2023+)':}")
+    print_summary(rows_for_period(mask_recent=True))
+
+
 def main() -> None:
     returns = load_daily_returns()
     basket_ret = returns.mean(axis=1)
 
     for regime_label in ("default (H1)", "intraday (M15)"):
         run_for_regime(regime_label, REGIMES[regime_label]["path"], returns, basket_ret)
+        sweep_drawdown_thresholds(regime_label, REGIMES[regime_label]["path"], basket_ret)
 
     print("\nALL_DONE")
 
