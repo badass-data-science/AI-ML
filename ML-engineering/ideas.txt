@@ -5,6 +5,7 @@
   right now" is predictive — rather than us hand-designing a rule for it. Low effort to bolt onto the upcoming re-screening work, and it's a genuinely
   different role for the data (feature source, not signal source).
 
+[IN PROGRESS 2026-08-31 — see ML-engineering/fx-regime-gate/: sketched a two-signal (VIX + fx-pcn burst) confirmation gate, RED/YELLOW/GREEN, as a first cut at this. Not yet wired to actually trigger screen_pair.py re-validation, and the gate's colors haven't been backtested against when forex-ML models actually went stale — see fx-regime-gate/README.md "Next steps"]
   2. Use fx-pcn as a meta-monitor that tells you WHEN to re-validate other models, not what to trade. The whole GBT investigation's failure mode was
   "validated once, silently went stale as the regime changed." fx-pcn's density/mean_abs_partial_corr already exists specifically to detect structural
   regime shifts — wire it up as a trigger: when the network's structure moves meaningfully outside its recent normal range, that's the signal to
