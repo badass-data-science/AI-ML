@@ -227,6 +227,45 @@ def add_daily_timeframe_features(
     )
 
 
+def add_fx_pcn_features(
+    df: DataFrame,
+    fx_pcn: pd.DataFrame,
+    cols: FeatureColumns = FeatureColumns(),
+) -> DataFrame:
+    """As-of join, identical mechanism and identical causal-correctness reasoning
+    to `add_daily_timeframe_features` above (see its docstring) -- fx-pcn's
+    network fit for date t isn't genuinely "closed" until date t is fully over,
+    so every value is shifted forward a full day before the lookup: an H1 bar
+    can only ever see a fx-pcn fit that has actually finished.
+
+    `fx_pcn` is `forex_ml.data.fx_pcn_features.load_pair_fx_pcn_features`'s
+    output -- one row per fx-pcn fit date, columns named in
+    `forex_ml.data.fx_pcn_features.FX_PCN_COLUMNS`. A gap in fx-pcn's own
+    fit-date coverage (a weekend, a holiday, or this pipeline simply not having
+    caught up yet) forward-fills through the last known value via the same
+    binary-search lookup daily_trend already uses -- there is no separate
+    "market closed" case to special-case here, since fx-pcn already only emits
+    rows for real trading days, so any gap in ITS index is exactly the gap this
+    join should bridge, not something to detect and handle differently."""
+    from forex_ml.data.fx_pcn_features import FX_PCN_COLUMNS
+
+    fx_pcn_sorted = fx_pcn.sort_values(cols.column_timestamp).reset_index(drop=True)
+    available_from = fx_pcn_sorted[cols.column_timestamp].to_numpy() + _SECONDS_PER_DAY
+
+    def _make_lookup_udf(values: np.ndarray):
+        @F.pandas_udf(DoubleType())  # type: ignore[call-overload]  # pyspark stub gap, not a real type error
+        def _lookup(timestamp: pd.Series) -> pd.Series:
+            idx = np.searchsorted(available_from, timestamp.to_numpy(), side="right") - 1
+            result = np.where(idx >= 0, values[np.clip(idx, 0, len(values) - 1)], np.nan)
+            return pd.Series(result, index=timestamp.index)
+
+        return _lookup
+
+    for column in FX_PCN_COLUMNS:
+        df = df.withColumn(column, _make_lookup_udf(fx_pcn_sorted[column].to_numpy())(F.col(cols.column_timestamp)))
+    return df
+
+
 # Sub-window sizes for the rescaled-range Hurst estimator below -- must each divide
 # HURST_WINDOW_BARS evenly (100/10=10, 100/20=5, 100/25=4, 100/50=2, 100/100=1 chunks)
 # so every scale gets at least one full, non-overlapping chunk. Five log-spaced
@@ -505,6 +544,7 @@ def engineer_features(
     cross_pair_usd_strength: DataFrame | None = None,
     daily_trend: pd.DataFrame | None = None,
     include_hurst: bool = False,
+    fx_pcn: pd.DataFrame | None = None,
     cols: FeatureColumns = FeatureColumns(),
 ) -> tuple[DataFrame, DataFrame, list[str]]:
     """Run the full Stage-1 pipeline on raw candles.
@@ -526,6 +566,11 @@ def engineer_features(
     `include_hurst` adds a rolling Hurst exponent (see add_rolling_hurst_feature) --
     no external data needed (pure function of this pair's own `return` column), so
     unlike the two flags above this is a plain bool, not an optional DataFrame/pdf.
+
+    `fx_pcn` is likewise optional (default None, meaning skip) -- this pair's own
+    structural features from forex-partial-correlation-network's local output,
+    assembled by the caller via prepare_data_flow.py's pull_fx_pcn_features_task,
+    see add_fx_pcn_features.
     """
     df = add_calendar_features(df, cols)
     df = add_session_features(df, cols)
@@ -536,6 +581,8 @@ def engineer_features(
         df = add_daily_timeframe_features(df, daily_trend, cols)
     if include_hurst:
         df = add_rolling_hurst_feature(df, cols=cols)
+    if fx_pcn is not None:
+        df = add_fx_pcn_features(df, fx_pcn, cols)
     df = add_targets(df, lookahead, cols)
     df = drop_raw_price_columns(df, columns_base, training_and_testing, cols)
     df = add_row_number(df, cols)

@@ -41,6 +41,11 @@ class FeatureParams(BaseModel):
     # actually produced by Stage 1 when engineer_features(include_hurst=True) is
     # used, so it can't be listed unconditionally either.
     include_hurst: bool = False
+    # Same opt-in reasoning again -- these come from forex-partial-correlation-
+    # network's own local output (not InfluxDB), which only covers its own 7-pair
+    # default network (see prepare_data_flow.py's pull_fx_pcn_features_task) --
+    # not every instrument this project might screen has this available.
+    include_fx_pcn: bool = False
 
     @property
     def engineered_columns(self) -> set[str]:
@@ -55,6 +60,11 @@ class FeatureParams(BaseModel):
             columns |= {"daily_return_ma", "daily_volatility_ma"}
         if self.include_hurst:
             columns.add("hurst_exponent")
+        if self.include_fx_pcn:
+            columns |= {
+                "fxpcn_network_mean_abs_partial_corr", "fxpcn_degree",
+                "fxpcn_directed_out_count", "fxpcn_directed_in_count",
+            }
         for lookback in self.ma_lookback_list:
             for column in self.ma_columns_list:
                 columns.add(f"{column}_MA_{lookback}")

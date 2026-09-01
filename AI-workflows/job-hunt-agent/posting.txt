@@ -1,0 +1,19 @@
+ Data Scientist – Mindgruve
+Mindgruve is a global marketing technology, media, and data company that partners with enterprise brands to deliver predictive marketing and business intelligence solutions. They're expanding their data science organization and are looking for someone who enjoys building practical, production-ready data products rather than focusing on research alone.
+This role is centered around taking data science models and analyses and turning them into scalable tools that internal teams and clients use every day. You'll collaborate closely with engineering and business stakeholders, owning projects from prototype through deployment and ongoing maintenance. The work includes predictive analytics, experimentation, forecasting, and marketing and commerce-related data initiatives, with a strong emphasis on building reliable products that deliver real business value.
+What You'll Do
+
+    Translate data science models and analyses into deployable, production-ready internal and external tools
+    Partner with engineering and account teams to implement and maintain data products used across the business
+    Own the full lifecycle of tool development — from prototype to productized, maintained asset
+    Work within a growing but still early-stage data science function, helping shape process and standards as the team scales
+    Support marketing/commerce data use cases (attribution, media mix modeling, predictive analytics) as they translate into tooling
+
+What We're Looking For
+
+    7–10 years of experience in data science, with demonstrated experience shipping tools/products (not just modeling or research)
+    Strong software engineering fundamentals — comfortable owning code that runs in production, not just in a notebook
+    Experience productizing internal tools, dashboards, or client-facing data products
+    Marketing, media, commerce, or agency-adjacent data experience is a plus given Mindgruve's business, but not required
+    Based in (or willing to work from) LA, San Diego, Atlanta, or Dallas
+    Comfortable with an early-stage, still-forming team environment — pragmatic, builder mindset over pure research mindset

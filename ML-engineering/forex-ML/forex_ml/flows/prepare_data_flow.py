@@ -22,8 +22,23 @@ from pyspark.sql import DataFrame, SparkSession
 from forex_ml.config import FeatureParams, load_params
 from forex_ml.data import influx_source
 from forex_ml.data.features import compute_cross_pair_usd_strength, engineer_features
+from forex_ml.data.fx_pcn_features import load_pair_fx_pcn_features
 from forex_ml.paths import non_time_series_parquet_path, pair_key, stage1_config_path, time_series_parquet_path
 from forex_ml.spark_session import DEFAULT_SPARK_MEMORY, build_spark_session
+
+# Hardcoded to fx-pcn's H1/default regime output for now (the one regime this
+# pipeline's own granularity matches) -- only meaningful for pairs in fx-pcn's
+# own default 7-major network. Extending to other regimes/networks would need
+# these parameterized rather than hardcoded.
+FX_PCN_OUTPUT_DIR = "/home/emily/output/forex-partial-correlation-network"
+FX_PCN_EDGES_PATH = (
+    f"{FX_PCN_OUTPUT_DIR}/parameters---network-name-forex-network-seven-majors---window-days-5---"
+    f"step-days-1---min-observations-60---max-lag-4---fdr-alpha-0.05---granularity-H1.parquet"
+)
+FX_PCN_DENSITY_PATH = (
+    f"{FX_PCN_OUTPUT_DIR}/density---network-name-forex-network-seven-majors---window-days-5---"
+    f"step-days-1---min-observations-60---max-lag-4---fdr-alpha-0.05---granularity-H1.parquet"
+)
 
 
 def _pull_candles(instrument: str, granularity: str, params: FeatureParams):
@@ -88,6 +103,19 @@ def pull_daily_trend_task(instrument: str, params: FeatureParams, ma_lookback_da
     return result
 
 
+@task(name="pull-fx-pcn-features", retries=1)
+def pull_fx_pcn_features_task(instrument: str) -> pd.DataFrame:
+    """Pulls this pair's own daily structural features from
+    forex-partial-correlation-network's local output (NOT InfluxDB -- a
+    genuinely different data source, see forex_ml.data.fx_pcn_features).
+    `retries=1` not 3: a missing/stale local file is a real, static condition
+    a retry won't fix, unlike a transient InfluxDB hiccup."""
+    logger = get_run_logger()
+    result = load_pair_fx_pcn_features(FX_PCN_EDGES_PATH, FX_PCN_DENSITY_PATH, instrument)
+    logger.info("Pulled %d fx-pcn fit dates for %s", len(result), instrument)
+    return result
+
+
 @task(name="engineer-and-save-features", cache_policy=NO_CACHE)
 def engineer_and_save_task(
     spark: SparkSession,
@@ -97,6 +125,7 @@ def engineer_and_save_task(
     params: FeatureParams,
     other_pairs_returns: dict[str, DataFrame] | None = None,
     daily_trend: pd.DataFrame | None = None,
+    fx_pcn: pd.DataFrame | None = None,
 ) -> str:
     # NO_CACHE: this task's args include a SparkSession/DataFrame, which Prefect's
     # default cache-key hashing can't serialize — without it, every run logs a noisy
@@ -142,6 +171,7 @@ def engineer_and_save_task(
         cross_pair_usd_strength=cross_pair_usd_strength,
         daily_trend=daily_trend,
         include_hurst=params.include_hurst,
+        fx_pcn=fx_pcn,
     )
 
     key = pair_key(instrument, granularity, params.n_back, params.lookahead)
@@ -197,8 +227,11 @@ def prepare_data_flow(
     }
 
     daily_trend = pull_daily_trend_task(instrument, params.feature) if params.feature.include_daily_trend else None
+    fx_pcn = pull_fx_pcn_features_task(instrument) if params.feature.include_fx_pcn else None
 
-    return engineer_and_save_task(spark, pdf, instrument, granularity, params.feature, other_pairs_returns, daily_trend)
+    return engineer_and_save_task(
+        spark, pdf, instrument, granularity, params.feature, other_pairs_returns, daily_trend, fx_pcn,
+    )
 
 
 def main() -> None:

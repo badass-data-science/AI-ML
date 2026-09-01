@@ -1,0 +1,120 @@
+schema: '2.0'
+stages:
+  prepare@2:
+    cmd: python -m forex_ml.flows.prepare_data_flow --instrument "EUR/USD" 
+      --granularity "H1"
+    deps:
+    - path: forex_ml/config.py
+      hash: md5
+      md5: a7c3e0d474650f50d9a4bee335d1949f
+      size: 4187
+    - path: forex_ml/data/features.py
+      hash: md5
+      md5: 661ca0685c8081d429410bc5f86754af
+      size: 12347
+    - path: forex_ml/data/influx_source.py
+      hash: md5
+      md5: cc6ed7026bb71bb6f10e71d5c5e3d485
+      size: 4011
+    - path: forex_ml/flows/prepare_data_flow.py
+      hash: md5
+      md5: e7423422c667d56c10b5e6def0745444
+      size: 6246
+    params:
+      params.yaml:
+        feature:
+          instruments:
+          - AUD/USD
+          - EUR/USD
+          - GBP/USD
+          - NZD/USD
+          - USD/CAD
+          - USD/CHF
+          - USD/JPY
+          granularities:
+          - H1
+          - M15
+          n_back: 200
+          lookahead: 4
+          ma_lookback_list:
+          - 12
+          - 30
+          - 50
+          columns_base:
+          - mid_open
+          - mid_high
+          - mid_low
+          - mid_close
+          - spread_close
+          - volume
+          ma_columns_list:
+          - volatility
+          - return
+          - diff_spread_close
+          - diff_volume
+          training_and_testing: true
+          min_training_timestamp: '2015-01-01T00:00:00'
+          output_dir: output
+    outs:
+    - path: output/interim/df_non_time_series__EUR_USD__H1__200__4.parquet
+      hash: md5
+      md5: a4ad6d30d793f30c9fcff6279f45eeff.dir
+      size: 8216651
+      nfiles: 24
+    - path: output/interim/df_time_series__EUR_USD__H1__200__4.parquet
+      hash: md5
+      md5: 04a22029fd93b204de784772fd7b6322.dir
+      size: 57453646
+      nfiles: 62
+  split@2:
+    cmd: python -m forex_ml.flows.split_flow --instrument "EUR/USD" 
+      --granularity "H1"
+    deps:
+    - path: forex_ml/config.py
+      hash: md5
+      md5: a7c3e0d474650f50d9a4bee335d1949f
+      size: 4187
+    - path: forex_ml/data/splitting.py
+      hash: md5
+      md5: 823c2431c1813f9744a528e9d2e64a9c
+      size: 20278
+    - path: forex_ml/flows/split_flow.py
+      hash: md5
+      md5: 8f63590cd169cd88e00a530974d059c0
+      size: 3843
+    - path: output/interim/df_non_time_series__EUR_USD__H1__200__4.parquet
+      hash: md5
+      md5: a4ad6d30d793f30c9fcff6279f45eeff.dir
+      size: 8216651
+      nfiles: 24
+    - path: output/interim/df_time_series__EUR_USD__H1__200__4.parquet
+      hash: md5
+      md5: 04a22029fd93b204de784772fd7b6322.dir
+      size: 57453646
+      nfiles: 62
+    params:
+      params.yaml:
+        split:
+          profit_take_pct: 0.3
+          stop_loss_pct: 0.3
+          max_holding_bars: 24
+          swap_cost_pct_per_night: 0.0
+          columns_x:
+          - volatility
+          - return
+          - diff_spread_close
+          - diff_volume
+          - day_sin
+          - day_cos
+          - is_tokyo_session
+          - is_london_session
+          - is_new_york_session
+          - is_london_new_york_overlap
+          train_val_proportion:
+          - 0.7
+          - 0.15
+    outs:
+    - path: output/processed/splits__EUR_USD__H1__200__4.npz
+      hash: md5
+      md5: f3b352ccc0a6731060b20a9412a2dd41
+      size: 12089798

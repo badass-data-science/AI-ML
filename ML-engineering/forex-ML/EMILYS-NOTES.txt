@@ -1,0 +1,55 @@
+
+
+Just off of curiousity, would it help to decrease the X and Y values' numerical precision? (To reduce memory requirements and/or increase training and inference speed)?
+
+Check that D candlestick load is working correctly.
+
+Check that D forward fill is working correctly.
+
+
+
+True multi-timeframe features from a coarser granularity (e.g. pull the Daily bar's own trend/volatility, not just a 96-bar H1 moving average). return_MA_96 already approximates "the last
+  ~4 days," but it's still an H1-noise-smoothed proxy — an actual D1-close-derived trend feature would filter out intrabar noise differently and might sharpen exactly the signal that's already
+  carrying the edge. This is the most defensible next step since it's a direct extension of what's already proven to work, not a new hypothesis.
+  2. A longer lookback on the winning features (e.g. return_MA_192/volatility_MA_192, ~8 days) — motivated directly by the recency-bucket finding that the oldest 40 bars in the current 200-bar
+  window still carry real signal, suggesting the model isn't done benefiting from more history yet.
+  3. A sharper cross-pair proxy. usd_strength_return (an average across all tracked pairs) barely registered in importance — it may be too diffuse. A narrower, more targeted construction
+  (fewer, more correlated pairs, or the counter-currency's own strength rather than broad-dollar) might do better, but this is a weaker bet than 1-2 since the existing version already had a
+  fair shot and mostly failed to contribute.
+
+  I'd start with #1 on USD/CHF and USD/JPY specifically (our two tradeable validated pairs) rather than testing across everything again — sharpen what's already known to work before spending
+  effort on pairs that failed. Want me to proceed with that, or do you have a different feature-set idea in mind?
+  
+  
+  
+  
+While we wait, would use of empirical mode decomposition help, provided we continue to avoid lookaheads? What about chaos- or fractal-based indices?
+  
+Also, while we wait, what about including additional indicators taken from the field of technical analysis?
+
+  Most classic TA indicators are mathematically redundant with what this pipeline already has. The "technical indicator zoo" mostly decomposes into a handful of underlying concepts: trend
+  direction (already return_MA_96), momentum/overbought-oversold (already rsi_12, return_zscore_12, return_sma_crossover — the RSI/Bollinger/MACD analogs from an earlier phase), and volatility
+  regime (already volatility_regime_ratio, now also the Hurst exponent for persistence). Stochastic oscillator, Williams %R, CCI are all different formulas measuring roughly the same "where
+  does the current move sit relative to its recent range" idea RSI already captures. Bollinger Bands and Ichimoku are built from raw price levels, which this project deliberately avoids (the
+  stationary-features rule) — their stationary analogs are already here. Parabolic SAR and OBV are trend-following/volume constructs that substantially overlap with return_MA_96/diff_volume,
+  and diff_volume has already shown near-zero importance.
+
+  The one genuinely different concept I'd flag is ADX (Average Directional Index) — it measures trend strength specifically (via directional movement / true-range expansion), which is subtly
+  different from trend direction or persistence; none of the current features quite capture "how strongly is this move going, regardless of which way." It's the closest thing to actually new
+  information among the classic indicators.
+
+  But given what we've just seen empirically today — MA_192 (highly correlated with MA_96) made both pairs worse, the narrowed cross-pair proxy hurt USD/CHF — I'd be cautious about reflexively
+  adding more features right now rather than excited about it. The pattern so far is that correlated/redundant additions tend to destabilize GBT's tree splits rather than help, even when
+  well-motivated. Once the Hurst results are in, I'd suggest the more productive next move might be the opposite direction: a feature-ablation pass, checking whether some of the
+  already-near-zero-importance features (session flags, diff_spread_close, diff_volume, possibly usd_strength_return) can be dropped without hurting anything — simplifying the model rather than
+  continuing to grow it.
+
+  
+  
+Let's do a feature-ablation pass. As you set this up, please include both take-profit/stop-loss pairs that we've previously considered, and also add two or three additional pairs to USD/CHF and USD/JPY so that we can generalize a bit. Include the multi-timeframe feature as well during this more comprehensive analysis, even though it only worked out well for USD/JPY in our work so far.
+
+Then ADX (Average Directional Index)...
+
+Silver? Copper? Oil?
+
+
