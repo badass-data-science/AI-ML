@@ -30,14 +30,15 @@ circular-shift placebo) in
 ## Usage
 
 ```
-python3 gate.py
+python3 gate.py            # Markdown report to stdout (default)
+python3 gate.py --html     # same report, rendered as HTML to stdout
 ```
 
 Requires `pandas`, `numpy`, `yfinance`, and fx-pcn's own output already
 populated under `~/output/forex-partial-correlation-network/` (config:
 `window-days-60---step-days-7---min-observations-30---max-lag-3---fdr-alpha-0.05---granularity-D`).
 
-The script prints a status report including a "HOW TO READ THIS GATE"
+The script prints a status report including a "How to read this gate"
 section — read that before acting on the color, since this is a lagging
 confirmation signal, not an early-warning one.
 

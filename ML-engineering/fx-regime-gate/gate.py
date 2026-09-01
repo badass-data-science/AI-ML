@@ -158,34 +158,47 @@ INTERPRETATION = {
     ),
 }
 
-HOW_TO_READ = """\
-This is a CONFIRMATION tool, not an early-warning one. VIX has been shown
-to lead fx-pcn bursts by 1-10 weeks (Granger causality, placebo-tested) --
-bursts do NOT lead VIX. So a color change here never happens before VIX has
-already moved; the fx-pcn side only tells you whether that VIX move is
-showing up structurally in FX pair relationships, which VIX alone can't
-tell you (VIX can spike for reasons that never touch FX).
-
-The burst signal itself is real but narrow: it's a TAIL effect. Across the
-full historical range, VIX level barely correlates with weekly flip count
-(Spearman r=0.055, not significant) -- the relationship only shows up when
-comparing the most extreme burst weeks (top ~6%, >=7 flips) against
-everything else. Most elevated-VIX weeks do NOT produce a burst. A burst is
-close to necessary-but-not-sufficient for "VIX is genuinely FX-relevant
-right now," not a general-purpose volatility predictor.
-
-| Color | Condition | Meaning |
-| --- | --- | --- |
-| 🔴 RED | VIX elevated (>= {vix_thresh}) AND a burst (>= {burst_thresh} flips) in the last {lookback} week(s) | Real, placebo-surviving co-occurrence signal from FINDINGS.md. Treat as FX-relevant. |
-| 🟡 YELLOW | Only one of the two signals firing | Common; not on its own evidence of anything FX-specific. |
-| 🟢 GREEN | Neither signal firing | Quiet regime by both measures. |
-""".format(
-    vix_thresh=VIX_ELEVATED_THRESHOLD,
-    burst_thresh=BURST_THRESHOLD,
-    lookback=BURST_LOOKBACK_STEPS,
-)
+HOW_TO_READ_PARAGRAPHS = [
+    "This is a CONFIRMATION tool, not an early-warning one. VIX has been "
+    "shown to lead fx-pcn bursts by 1-10 weeks (Granger causality, "
+    "placebo-tested) -- bursts do NOT lead VIX. So a color change here "
+    "never happens before VIX has already moved; the fx-pcn side only "
+    "tells you whether that VIX move is showing up structurally in FX "
+    "pair relationships, which VIX alone can't tell you (VIX can spike "
+    "for reasons that never touch FX).",
+    "The burst signal itself is real but narrow: it's a TAIL effect. "
+    "Across the full historical range, VIX level barely correlates with "
+    "weekly flip count (Spearman r=0.055, not significant) -- the "
+    "relationship only shows up when comparing the most extreme burst "
+    "weeks (top ~6%, >=7 flips) against everything else. Most "
+    "elevated-VIX weeks do NOT produce a burst. A burst is close to "
+    'necessary-but-not-sufficient for "VIX is genuinely FX-relevant '
+    'right now," not a general-purpose volatility predictor.',
+]
 
 COLOR_EMOJI = {"RED": "🔴", "YELLOW": "🟡", "GREEN": "🟢"}
+COLOR_CSS = {"RED": "#c0392b", "YELLOW": "#b7950b", "GREEN": "#1e8449"}
+
+COLOR_LEGEND = [
+    (
+        "RED",
+        f"VIX elevated (>= {VIX_ELEVATED_THRESHOLD}) AND a burst "
+        f"(>= {BURST_THRESHOLD} flips) in the last {BURST_LOOKBACK_STEPS} "
+        "week(s)",
+        "Real, placebo-surviving co-occurrence signal from FINDINGS.md. "
+        "Treat as FX-relevant.",
+    ),
+    (
+        "YELLOW",
+        "Only one of the two signals firing",
+        "Common; not on its own evidence of anything FX-specific.",
+    ),
+    (
+        "GREEN",
+        "Neither signal firing",
+        "Quiet regime by both measures.",
+    ),
+]
 
 
 def render_report(status: GateStatus) -> str:
@@ -224,7 +237,14 @@ def render_report(status: GateStatus) -> str:
     lines.append("")
     lines.append("## How to read this gate")
     lines.append("")
-    lines.append(HOW_TO_READ)
+    for paragraph in HOW_TO_READ_PARAGRAPHS:
+        lines.append(paragraph)
+        lines.append("")
+    lines.append("| Color | Condition | Meaning |")
+    lines.append("| --- | --- | --- |")
+    for color, condition, meaning in COLOR_LEGEND:
+        lines.append(f"| {COLOR_EMOJI[color]} {color} | {condition} | {meaning} |")
+    lines.append("")
     lines.append(
         "Full methodology and all validation tests (shuffle placebo, "
         "reverse-direction placebo, circular-shift placebo): "
@@ -233,11 +253,100 @@ def render_report(status: GateStatus) -> str:
     return "\n".join(lines)
 
 
+def render_report_html(status: GateStatus) -> str:
+    color_hex = COLOR_CSS[status.color]
+    signal2_rows = "".join(
+        f"<li><strong>{label}</strong> {value}</li>"
+        for label, value in [
+            ("Current week flip count:", status.current_flip_count),
+            (
+                f"Last {BURST_LOOKBACK_STEPS} weeks:",
+                status.recent_flip_counts[-BURST_LOOKBACK_STEPS:],
+            ),
+            (
+                f"Recent burst (&gt;= {BURST_THRESHOLD} flips within "
+                f"{BURST_LOOKBACK_STEPS} wks):",
+                "<strong>YES</strong>" if status.recent_burst else "no",
+            ),
+        ]
+    )
+    weeks_since_row = (
+        f"<li><strong>Weeks since last burst:</strong> {status.weeks_since_last_burst}</li>"
+        if status.weeks_since_last_burst is not None
+        else "<li>No burst in available history</li>"
+    )
+    legend_rows = "".join(
+        f"<tr><td>{COLOR_EMOJI[color]} {color}</td><td>{condition}</td>"
+        f"<td>{meaning}</td></tr>"
+        for color, condition, meaning in COLOR_LEGEND
+    )
+    paragraphs = "".join(f"<p>{p}</p>" for p in HOW_TO_READ_PARAGRAPHS)
+
+    return f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FX Volatility Regime Confirmation Gate (vis-a-vis VIX)</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto;
+         padding: 0 1rem; line-height: 1.5; color: #1a1a1a; }}
+  .status {{ display: inline-block; padding: 0.25em 0.75em; border-radius: 0.4em;
+            color: white; background: {color_hex}; font-weight: bold; }}
+  table {{ border-collapse: collapse; width: 100%; margin: 1em 0; }}
+  th, td {{ border: 1px solid #ccc; padding: 0.5em; text-align: left; vertical-align: top; }}
+  th {{ background: #f2f2f2; }}
+  code {{ background: #f2f2f2; padding: 0.1em 0.3em; border-radius: 0.3em; }}
+</style>
+</head>
+<body>
+<h1>FX Volatility Regime Confirmation Gate (vis-a-vis VIX)</h1>
+<p><em>As of fx-pcn evaluation step: {status.as_of_date.date()}</em></p>
+
+<h2>Gate status: <span class="status">{COLOR_EMOJI[status.color]} {status.color}</span></h2>
+
+<h3>Signal 1 &mdash; VIX</h3>
+<ul>
+  <li><strong>Level:</strong> {status.vix_level:.2f}</li>
+  <li><strong>Status:</strong> {'ELEVATED (&gt;= ' + str(VIX_ELEVATED_THRESHOLD) + ')' if status.vix_elevated else 'calm'}</li>
+</ul>
+
+<h3>Signal 2 &mdash; fx-pcn burst (60d window / 7d step / daily)</h3>
+<ul>
+  {signal2_rows}
+  {weeks_since_row}
+  <li><strong>Last 8 weeks flip counts:</strong> {status.recent_flip_counts}</li>
+</ul>
+
+<h2>Interpretation</h2>
+<p>{INTERPRETATION[status.color]}</p>
+
+<h2>How to read this gate</h2>
+{paragraphs}
+<table>
+  <tr><th>Color</th><th>Condition</th><th>Meaning</th></tr>
+  {legend_rows}
+</table>
+
+<p>Full methodology and all validation tests (shuffle placebo,
+reverse-direction placebo, circular-shift placebo):
+<code>forex-partial-correlation-network/EDA/FINDINGS.md</code></p>
+</body>
+</html>
+"""
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.parse_args()
+    parser.add_argument(
+        "--html", action="store_true", help="Render the report as HTML instead of Markdown."
+    )
+    args = parser.parse_args()
     status = compute_gate_status()
-    print(render_report(status))
+    if args.html:
+        print(render_report_html(status))
+    else:
+        print(render_report(status))
 
 
 if __name__ == "__main__":
