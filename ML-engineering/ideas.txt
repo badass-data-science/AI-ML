@@ -1,3 +1,4 @@
+[DONE — REJECTED 2026-08-30, see project_fx_pcn_feature_injection_pilot_2026_08_30 memory: coin flip across pair-windows, no replication]
  1. Feed network features INTO the forex-ML GBT models, rather than treating fx-pcn as its own strategy. Since you're about to re-screen pairs
   properly (option #1), this is a natural companion: add each pair's own mean_abs_partial_corr, degree (how many edges it has that day), and
   directed-in/out-count as extra columns in columns_x, and let the classifier itself learn whether "how structurally connected/leading is this pair
@@ -20,6 +21,7 @@
   lightweight harness that revisits each day's bullet a few days later against the real subsequent density/direction data would produce a scored
   reliability history for the qualitative layer — telling you whether it's worth trusting at all, which right now is just an assumption.
 
+[DONE — see forex-partial-correlation-network/EDA/FINDINGS.md (2026-08-31): FOMC rejected (spurious, reverse-Granger-causality confirmed confound); VIX co-occurrence real but tail-only; VIX leads bursts (not the reverse) so it's a lagging confirmation signal, not a novel early-warning detector]
   5. Watch for direction-flip bursts as a calendar-free event detector. Rather than single flips, flag days where an unusually large number of pairs
   flip simultaneously — a structural-shock signature that doesn't need an economic calendar to notice. Worth cross-checking against known FOMC/NFP/ECB
   dates (does the network "see" scheduled events) and, more interestingly, whether it catches unscheduled shocks a calendar would miss entirely.

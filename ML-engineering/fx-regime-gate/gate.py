@@ -1,0 +1,251 @@
+"""
+FX regime confirmation gate -- a two-signal situational-awareness dashboard.
+
+Combines VIX level with fx-pcn direction-flip burst status to answer one
+question: is a current volatility spike actually showing up as structural
+change in FX pair correlations, or is it (so far) an equity-only event?
+
+Background / where the thresholds come from:
+    forex-partial-correlation-network/EDA/FINDINGS.md, 2026-08-31 entry.
+    - Burst (>=7 directed-edge flips in a week) is a real but tail-only
+      signal: high-burst weeks have significantly higher VIX than the rest
+      (median 22 vs 16, Mann-Whitney p=0.0007, robust to excluding COVID).
+    - VIX leads bursts by 1-10 weeks; bursts do NOT lead VIX (Granger
+      causality, placebo-tested). So this gate is a CONFIRMATION/FILTER
+      tool, not an early-warning one -- it never fires before VIX moves.
+    - The FOMC calendar was tested and rejected as a driver of bursts (the
+      apparent Granger-causality "signal" there was a spurious periodicity
+      confound -- see FINDINGS.md). This gate deliberately does not use
+      any economic calendar.
+
+Data sources:
+    - fx-pcn `density`/`direction` parquet output, config:
+      window-days-60, step-days-7, min-observations-30, max-lag-3,
+      fdr-alpha-0.05, granularity-D. Read from
+      ~/output/forex-partial-correlation-network/ (populated by fx-pcn's
+      own Prefect pipeline -- this script only reads it).
+    - VIX daily close via yfinance (^VIX).
+"""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import yfinance as yf
+
+FX_PCN_OUTPUT_DIR = Path.home() / "output" / "forex-partial-correlation-network"
+FX_PCN_CONFIG = (
+    "window-days-60---step-days-7---min-observations-30---max-lag-3"
+    "---fdr-alpha-0.05---granularity-D"
+)
+NETWORK_NAME = "network-name-forex-network-seven-majors"
+
+# Thresholds, sourced directly from FINDINGS.md's empirical results.
+BURST_THRESHOLD = 7  # flips/week; ~90th percentile of the historical distribution
+VIX_ELEVATED_THRESHOLD = 20.0  # standard industry "elevated" band; close to the
+                                # 22-median VIX observed among historical burst weeks
+BURST_LOOKBACK_STEPS = 2  # a burst up to 2 weekly steps ago still counts as "recent",
+                           # since VIX leading bursts by 1-2 weeks was the strongest lag
+
+
+@dataclass
+class GateStatus:
+    as_of_date: pd.Timestamp
+    vix_level: float
+    vix_elevated: bool
+    current_flip_count: int
+    weeks_since_last_burst: int | None
+    recent_burst: bool
+    recent_flip_counts: list[int]
+    color: str
+
+
+def load_fx_pcn_series() -> tuple[pd.DatetimeIndex, pd.Series]:
+    density_path = (
+        FX_PCN_OUTPUT_DIR / f"density---{NETWORK_NAME}---{FX_PCN_CONFIG}.parquet"
+    )
+    direction_path = (
+        FX_PCN_OUTPUT_DIR / f"direction---{NETWORK_NAME}---{FX_PCN_CONFIG}.parquet"
+    )
+    if not density_path.exists() or not direction_path.exists():
+        raise FileNotFoundError(
+            f"Expected fx-pcn output not found under {FX_PCN_OUTPUT_DIR}. "
+            "Run fx-pcn's pipeline first."
+        )
+
+    density = pd.read_parquet(density_path)
+    direction = pd.read_parquet(direction_path)
+    direction["date"] = pd.to_datetime(direction["date"])
+
+    all_dates = pd.DatetimeIndex(sorted(pd.to_datetime(density["date"]).unique()))
+    flip_counts = direction.groupby("date").size().reindex(all_dates, fill_value=0)
+    return all_dates, flip_counts
+
+
+def fetch_vix(as_of: pd.Timestamp) -> float:
+    vix = yf.download(
+        "^VIX",
+        start=(as_of - pd.Timedelta(days=30)).strftime("%Y-%m-%d"),
+        end=(as_of + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+        progress=False,
+    )
+    vix.columns = vix.columns.get_level_values(0)
+    close = vix["Close"].dropna()
+    if close.empty:
+        raise RuntimeError("Could not fetch a recent VIX close from yfinance.")
+    return float(close.iloc[-1])
+
+
+def compute_gate_status() -> GateStatus:
+    all_dates, flip_counts = load_fx_pcn_series()
+    as_of_date = all_dates[-1]
+    vix_level = fetch_vix(as_of_date)
+    vix_elevated = vix_level >= VIX_ELEVATED_THRESHOLD
+
+    current_flip_count = int(flip_counts.iloc[-1])
+    recent_window = flip_counts.iloc[-BURST_LOOKBACK_STEPS:]
+    recent_burst = bool((recent_window >= BURST_THRESHOLD).any())
+
+    burst_dates = flip_counts[flip_counts >= BURST_THRESHOLD].index
+    if len(burst_dates) > 0:
+        weeks_since_last_burst = int(
+            (as_of_date - burst_dates[-1]).days // 7
+        )
+    else:
+        weeks_since_last_burst = None
+
+    if vix_elevated and recent_burst:
+        color = "RED"
+    elif vix_elevated or recent_burst:
+        color = "YELLOW"
+    else:
+        color = "GREEN"
+
+    return GateStatus(
+        as_of_date=as_of_date,
+        vix_level=vix_level,
+        vix_elevated=vix_elevated,
+        current_flip_count=current_flip_count,
+        weeks_since_last_burst=weeks_since_last_burst,
+        recent_burst=recent_burst,
+        recent_flip_counts=[int(x) for x in flip_counts.iloc[-8:]],
+        color=color,
+    )
+
+
+INTERPRETATION = {
+    "RED": (
+        "VIX is elevated AND the fx-pcn network has burst recently. This is "
+        "the one state where fx-pcn's own analysis found a real, "
+        "placebo-surviving link to volatility. It CONFIRMS that whatever is "
+        "driving VIX up is also showing up as structural change in FX "
+        "correlations -- not just an equity-side event. Treat as: the "
+        "regime shift is FX-relevant, worth re-validating pair models "
+        "against (see idea #2, ideas.txt) and worth distrusting any "
+        "currently 'validated' forex-ML model until re-checked."
+    ),
+    "YELLOW": (
+        "Only one of the two signals is firing. Historically this is common "
+        "and NOT on its own evidence of an FX-relevant regime shift -- most "
+        "elevated-VIX weeks never produce a burst, and it's possible to see "
+        "a burst without VIX being elevated. Treat as: worth watching, not "
+        "worth acting on by itself."
+    ),
+    "GREEN": (
+        "Neither signal is firing. No evidence of elevated volatility or "
+        "structural FX change this week. Normal/quiet regime by both "
+        "measures."
+    ),
+}
+
+HOW_TO_READ = """\
+HOW TO READ THIS GATE
+----------------------
+This is a CONFIRMATION tool, not an early-warning one. VIX has been shown
+to lead fx-pcn bursts by 1-10 weeks (Granger causality, placebo-tested) --
+bursts do NOT lead VIX. So a color change here never happens before VIX has
+already moved; the fx-pcn side only tells you whether that VIX move is
+showing up structurally in FX pair relationships, which VIX alone can't
+tell you (VIX can spike for reasons that never touch FX).
+
+The burst signal itself is real but narrow: it's a TAIL effect. Across the
+full historical range, VIX level barely correlates with weekly flip count
+(Spearman r=0.055, not significant) -- the relationship only shows up when
+comparing the most extreme burst weeks (top ~6%, >=7 flips) against
+everything else. Most elevated-VIX weeks do NOT produce a burst. A burst is
+close to necessary-but-not-sufficient for "VIX is genuinely FX-relevant
+right now," not a general-purpose volatility predictor.
+
+The FOMC calendar was deliberately tested and rejected as a driver of
+bursts -- an apparently strong Granger-causality result there turned out to
+be a spurious periodicity artifact (see FINDINGS.md). This gate does not
+use any economic calendar for that reason.
+
+Color meanings:
+  RED    -- VIX elevated (>= {vix_thresh}) AND a burst (>= {burst_thresh}
+            flips) in the last {lookback} week(s). Real, placebo-surviving
+            co-occurrence signal from FINDINGS.md. Treat as FX-relevant.
+  YELLOW -- only one of the two signals firing. Common; not on its own
+            evidence of anything FX-specific.
+  GREEN  -- neither signal firing. Quiet regime by both measures.
+""".format(
+    vix_thresh=VIX_ELEVATED_THRESHOLD,
+    burst_thresh=BURST_THRESHOLD,
+    lookback=BURST_LOOKBACK_STEPS,
+)
+
+
+def render_report(status: GateStatus) -> str:
+    lines = []
+    lines.append("=" * 60)
+    lines.append("FX REGIME CONFIRMATION GATE")
+    lines.append("=" * 60)
+    lines.append(f"As of fx-pcn evaluation step: {status.as_of_date.date()}")
+    lines.append("")
+    lines.append(f"GATE STATUS: {status.color}")
+    lines.append("")
+    lines.append("Signal 1 -- VIX")
+    lines.append(
+        f"  Level: {status.vix_level:.2f}  "
+        f"({'ELEVATED (>= ' + str(VIX_ELEVATED_THRESHOLD) + ')' if status.vix_elevated else 'calm'})"
+    )
+    lines.append("")
+    lines.append("Signal 2 -- fx-pcn burst (60d window / 7d step / daily)")
+    lines.append(f"  Current week flip count: {status.current_flip_count}")
+    lines.append(f"  Last {BURST_LOOKBACK_STEPS} weeks: {status.recent_flip_counts[-BURST_LOOKBACK_STEPS:]}")
+    lines.append(
+        f"  Recent burst (>= {BURST_THRESHOLD} flips within {BURST_LOOKBACK_STEPS} wks): "
+        f"{'YES' if status.recent_burst else 'no'}"
+    )
+    if status.weeks_since_last_burst is not None:
+        lines.append(f"  Weeks since last burst: {status.weeks_since_last_burst}")
+    else:
+        lines.append("  No burst in available history")
+    lines.append(f"  Last 8 weeks flip counts: {status.recent_flip_counts}")
+    lines.append("")
+    lines.append("INTERPRETATION")
+    lines.append("-" * 60)
+    lines.append(INTERPRETATION[status.color])
+    lines.append("")
+    lines.append(HOW_TO_READ)
+    lines.append(
+        "Full methodology and all validation tests (shuffle placebo, "
+        "reverse-direction placebo, circular-shift placebo): "
+        "forex-partial-correlation-network/EDA/FINDINGS.md"
+    )
+    return "\n".join(lines)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.parse_args()
+    status = compute_gate_status()
+    print(render_report(status))
+
+
+if __name__ == "__main__":
+    main()
