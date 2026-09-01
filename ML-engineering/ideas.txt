@@ -1,0 +1,26 @@
+ 1. Feed network features INTO the forex-ML GBT models, rather than treating fx-pcn as its own strategy. Since you're about to re-screen pairs
+  properly (option #1), this is a natural companion: add each pair's own mean_abs_partial_corr, degree (how many edges it has that day), and
+  directed-in/out-count as extra columns in columns_x, and let the classifier itself learn whether "how structurally connected/leading is this pair
+  right now" is predictive — rather than us hand-designing a rule for it. Low effort to bolt onto the upcoming re-screening work, and it's a genuinely
+  different role for the data (feature source, not signal source).
+
+  2. Use fx-pcn as a meta-monitor that tells you WHEN to re-validate other models, not what to trade. The whole GBT investigation's failure mode was
+  "validated once, silently went stale as the regime changed." fx-pcn's density/mean_abs_partial_corr already exists specifically to detect structural
+  regime shifts — wire it up as a trigger: when the network's structure moves meaningfully outside its recent normal range, that's the signal to
+  automatically re-run screen_pair.py --min-timestamp on whatever's currently "live," instead of finding out a model went stale by accident (the way we
+  found out today).
+
+  3. Use the graphical-lasso partial-correlation matrix as a covariance estimate for portfolio construction, not exposure scaling. The earlier
+  USD/CHF+USD/JPY diversification finding used naive equal weighting. Graphical lasso already gives a sparse, regularized precision matrix — a
+  genuinely better-conditioned covariance estimate than sample covariance for a small basket of collinear FX pairs. If option #1 finds 2+ validated
+  pairs again, use fx-pcn's own output to size relative weights between them (min-variance / risk-parity style) instead of 50/50.
+
+  4. Grade the LLM's own qualitative bullets against reality, building an automatic track record. The bullets already phrase things as falsifiable
+  predictions ("this read would be confirmed if X, invalidated if Y"). Nothing has ever checked whether those predictions actually came true. A
+  lightweight harness that revisits each day's bullet a few days later against the real subsequent density/direction data would produce a scored
+  reliability history for the qualitative layer — telling you whether it's worth trusting at all, which right now is just an assumption.
+
+  5. Watch for direction-flip bursts as a calendar-free event detector. Rather than single flips, flag days where an unusually large number of pairs
+  flip simultaneously — a structural-shock signature that doesn't need an economic calendar to notice. Worth cross-checking against known FOMC/NFP/ECB
+  dates (does the network "see" scheduled events) and, more interestingly, whether it catches unscheduled shocks a calendar would miss entirely.
+  
