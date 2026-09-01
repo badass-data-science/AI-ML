@@ -13,10 +13,6 @@ Background / where the thresholds come from:
     - VIX leads bursts by 1-10 weeks; bursts do NOT lead VIX (Granger
       causality, placebo-tested). So this gate is a CONFIRMATION/FILTER
       tool, not an early-warning one -- it never fires before VIX moves.
-    - The FOMC calendar was tested and rejected as a driver of bursts (the
-      apparent Granger-causality "signal" there was a spurious periodicity
-      confound -- see FINDINGS.md). This gate deliberately does not use
-      any economic calendar.
 
 Data sources:
     - fx-pcn `density`/`direction` parquet output, config:
@@ -163,8 +159,6 @@ INTERPRETATION = {
 }
 
 HOW_TO_READ = """\
-HOW TO READ THIS GATE
-----------------------
 This is a CONFIRMATION tool, not an early-warning one. VIX has been shown
 to lead fx-pcn bursts by 1-10 weeks (Granger causality, placebo-tested) --
 bursts do NOT lead VIX. So a color change here never happens before VIX has
@@ -180,62 +174,61 @@ everything else. Most elevated-VIX weeks do NOT produce a burst. A burst is
 close to necessary-but-not-sufficient for "VIX is genuinely FX-relevant
 right now," not a general-purpose volatility predictor.
 
-The FOMC calendar was deliberately tested and rejected as a driver of
-bursts -- an apparently strong Granger-causality result there turned out to
-be a spurious periodicity artifact (see FINDINGS.md). This gate does not
-use any economic calendar for that reason.
-
-Color meanings:
-  RED    -- VIX elevated (>= {vix_thresh}) AND a burst (>= {burst_thresh}
-            flips) in the last {lookback} week(s). Real, placebo-surviving
-            co-occurrence signal from FINDINGS.md. Treat as FX-relevant.
-  YELLOW -- only one of the two signals firing. Common; not on its own
-            evidence of anything FX-specific.
-  GREEN  -- neither signal firing. Quiet regime by both measures.
+| Color | Condition | Meaning |
+| --- | --- | --- |
+| 🔴 RED | VIX elevated (>= {vix_thresh}) AND a burst (>= {burst_thresh} flips) in the last {lookback} week(s) | Real, placebo-surviving co-occurrence signal from FINDINGS.md. Treat as FX-relevant. |
+| 🟡 YELLOW | Only one of the two signals firing | Common; not on its own evidence of anything FX-specific. |
+| 🟢 GREEN | Neither signal firing | Quiet regime by both measures. |
 """.format(
     vix_thresh=VIX_ELEVATED_THRESHOLD,
     burst_thresh=BURST_THRESHOLD,
     lookback=BURST_LOOKBACK_STEPS,
 )
 
+COLOR_EMOJI = {"RED": "🔴", "YELLOW": "🟡", "GREEN": "🟢"}
+
 
 def render_report(status: GateStatus) -> str:
     lines = []
-    lines.append("=" * 60)
-    lines.append("FX REGIME CONFIRMATION GATE")
-    lines.append("=" * 60)
-    lines.append(f"As of fx-pcn evaluation step: {status.as_of_date.date()}")
+    lines.append("# FX Volatility Regime Confirmation Gate (vis-a-vis VIX)")
     lines.append("")
-    lines.append(f"GATE STATUS: {status.color}")
+    lines.append(f"*As of fx-pcn evaluation step: {status.as_of_date.date()}*")
     lines.append("")
-    lines.append("Signal 1 -- VIX")
+    lines.append(f"## Gate status: {COLOR_EMOJI[status.color]} {status.color}")
+    lines.append("")
+    lines.append("### Signal 1 — VIX")
+    lines.append("")
+    lines.append(f"- **Level:** {status.vix_level:.2f}")
     lines.append(
-        f"  Level: {status.vix_level:.2f}  "
-        f"({'ELEVATED (>= ' + str(VIX_ELEVATED_THRESHOLD) + ')' if status.vix_elevated else 'calm'})"
+        f"- **Status:** "
+        f"{'ELEVATED (>= ' + str(VIX_ELEVATED_THRESHOLD) + ')' if status.vix_elevated else 'calm'}"
     )
     lines.append("")
-    lines.append("Signal 2 -- fx-pcn burst (60d window / 7d step / daily)")
-    lines.append(f"  Current week flip count: {status.current_flip_count}")
-    lines.append(f"  Last {BURST_LOOKBACK_STEPS} weeks: {status.recent_flip_counts[-BURST_LOOKBACK_STEPS:]}")
+    lines.append("### Signal 2 — fx-pcn burst (60d window / 7d step / daily)")
+    lines.append("")
+    lines.append(f"- **Current week flip count:** {status.current_flip_count}")
+    lines.append(f"- **Last {BURST_LOOKBACK_STEPS} weeks:** {status.recent_flip_counts[-BURST_LOOKBACK_STEPS:]}")
     lines.append(
-        f"  Recent burst (>= {BURST_THRESHOLD} flips within {BURST_LOOKBACK_STEPS} wks): "
-        f"{'YES' if status.recent_burst else 'no'}"
+        f"- **Recent burst** (>= {BURST_THRESHOLD} flips within {BURST_LOOKBACK_STEPS} wks): "
+        f"{'**YES**' if status.recent_burst else 'no'}"
     )
     if status.weeks_since_last_burst is not None:
-        lines.append(f"  Weeks since last burst: {status.weeks_since_last_burst}")
+        lines.append(f"- **Weeks since last burst:** {status.weeks_since_last_burst}")
     else:
-        lines.append("  No burst in available history")
-    lines.append(f"  Last 8 weeks flip counts: {status.recent_flip_counts}")
+        lines.append("- No burst in available history")
+    lines.append(f"- **Last 8 weeks flip counts:** {status.recent_flip_counts}")
     lines.append("")
-    lines.append("INTERPRETATION")
-    lines.append("-" * 60)
+    lines.append("## Interpretation")
+    lines.append("")
     lines.append(INTERPRETATION[status.color])
+    lines.append("")
+    lines.append("## How to read this gate")
     lines.append("")
     lines.append(HOW_TO_READ)
     lines.append(
         "Full methodology and all validation tests (shuffle placebo, "
         "reverse-direction placebo, circular-shift placebo): "
-        "forex-partial-correlation-network/EDA/FINDINGS.md"
+        "`forex-partial-correlation-network/EDA/FINDINGS.md`"
     )
     return "\n".join(lines)
 
