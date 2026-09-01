@@ -17,6 +17,7 @@
   genuinely better-conditioned covariance estimate than sample covariance for a small basket of collinear FX pairs. If option #1 finds 2+ validated
   pairs again, use fx-pcn's own output to size relative weights between them (min-variance / risk-parity style) instead of 50/50.
 
+[IN PROGRESS 2026-08-31 — prerequisite fixed first: found only ~1/3 of bullets were actually falsifiable, since the prompt asked for 3 bullet categories without a minimum count of confirm/invalidate ones. Fixed at the source in forex-partial-correlation-network/src/fx_pcn/summary.py (pushed origin/main 2b6ff48) -- at least 2 of the 3-6 bullets now must follow a fixed "Confirmed if: / Invalidated if: / Horizon: N windows" template, deterministically checkable against density/direction tables, no LLM judge needed at grading time. BLOCKED on a few days of bullets accumulating under the new prompt in production before the harness itself gets built -- don't start until user confirms new data exists. See project_fx_pcn_bullet_grading_harness_pending memory]
   4. Grade the LLM's own qualitative bullets against reality, building an automatic track record. The bullets already phrase things as falsifiable
   predictions ("this read would be confirmed if X, invalidated if Y"). Nothing has ever checked whether those predictions actually came true. A
   lightweight harness that revisits each day's bullet a few days later against the real subsequent density/direction data would produce a scored
