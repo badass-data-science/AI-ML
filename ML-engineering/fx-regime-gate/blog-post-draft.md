@@ -46,7 +46,7 @@ So instead of an early-warning siren, she built a confirmation gate — a small 
 
 **GREEN** means neither signal is firing — a quiet week by both measures, which, as of this writing, is exactly where things stand: VIX at 15.2, and the last burst happened forty-five weeks ago.
 
-The script itself is a single Python file, `gate.py`, that anyone can run with `python3 gate.py` as long as fx-pcn's own pipeline has already populated its output directory. It prints a plain-text report, including a "how to read this gate" section built directly into every run, so the caveats travel with the result instead of living only in a paper nobody rereads before making a decision. That section says, in slightly more measured language than this post: this is a lagging confirmation signal, not a predictive one, so don't expect it to move before VIX does; the underlying burst signal is a tail effect, not a general-purpose correlate, so don't over-read a single YELLOW; and the FOMC calendar was deliberately left out of this tool entirely, because — as established above — the Fed did not do it.
+The script itself is a single Python file, `fx-vix-regime-gate.py`, that anyone can run with `python3 fx-vix-regime-gate.py` as long as fx-pcn's own pipeline has already populated its output directory. It prints a plain-text report, including a "how to read this gate" section built directly into every run, so the caveats travel with the result instead of living only in a paper nobody rereads before making a decision. That section says, in slightly more measured language than this post: this is a lagging confirmation signal, not a predictive one, so don't expect it to move before VIX does; the underlying burst signal is a tail effect, not a general-purpose correlate, so don't over-read a single YELLOW; and the FOMC calendar was deliberately left out of this tool entirely, because — as established above — the Fed did not do it.
 
 **Why This Is the Right Amount of Tool**
 
@@ -56,4 +56,4 @@ That's next on the list, and it isn't built yet: nobody has gone back and checke
 
 **AI Use Statement**
 
-[Draft note to self: fill this in honestly before publishing — Claude Code ran essentially all of the statistical work in this post (the burst distribution, the FOMC placebo tests, the VIX co-occurrence and lead/lag Granger tests, and the gate.py script itself), and also wrote this draft prose from that analysis. Confirm exact phrasing before this goes out.]
+[Draft note to self: fill this in honestly before publishing — Claude Code ran essentially all of the statistical work in this post (the burst distribution, the FOMC placebo tests, the VIX co-occurrence and lead/lag Granger tests, and the fx-vix-regime-gate.py script itself), and also wrote this draft prose from that analysis. Confirm exact phrasing before this goes out.]

@@ -30,8 +30,8 @@ circular-shift placebo) in
 ## Usage
 
 ```
-python3 gate.py            # Markdown report to stdout (default)
-python3 gate.py --html     # same report, rendered as HTML to stdout
+python3 fx-vix-regime-gate.py            # Markdown report to stdout (default)
+python3 fx-vix-regime-gate.py --html     # same report, rendered as HTML to stdout
 ```
 
 Requires `pandas`, `numpy`, `yfinance`, and fx-pcn's own output already
